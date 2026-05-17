@@ -1,0 +1,22 @@
+[Unit]
+Description=Travaux Web App
+After=network.target mysql.service
+
+[Service]
+Type=simple
+User=travaux
+Group=travaux
+WorkingDirectory=/home/travaux/app/Travaux/Interface/travaux
+Environment=NODE_ENV=production
+Environment=TRAVAUX_ENV_FILE=/home/travaux/.travaux/travaux.env
+ExecStartPre=/usr/bin/npm run build
+ExecStart=/usr/bin/npm run start
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,22 @@
+[Unit]
+Description=Travaux WhatsApp Bot
+After=network.target mysql.service
+
+[Service]
+Type=simple
+User=travaux
+Group=travaux
+WorkingDirectory=/home/travaux/app/Travaux/Bot
+Environment=NODE_ENV=production
+Environment=BOT_ENV_FILE=/home/travaux/.travaux/bot.env
+Environment=BOT_AUTH_DIR=/home/travaux/.travaux/bot/auth_info_baileys
+ExecStart=/usr/bin/npm start
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

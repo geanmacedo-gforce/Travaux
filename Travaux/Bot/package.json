@@ -1,0 +1,19 @@
+{
+  "name": "bot-whatsapp-jornada",
+  "version": "1.0.0",
+  "description": "Bot de WhatsApp para registro de jornada de trabalho com whatsapp-web.js",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^7.0.0-rc10",
+    "axios": "^1.16.0",
+    "dotenv": "^17.4.2",
+    "geolib": "^3.3.14",
+    "libphonenumber-js": "^1.12.25",
+    "mysql2": "^3.14.4",
+    "pino": "^10.3.1",
+    "qrcode": "^1.5.4"
+  }
+}

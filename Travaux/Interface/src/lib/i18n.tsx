@@ -1,0 +1,209 @@
+import { useMemo } from "react";
+import { useTenantSettings } from "@/lib/tenant-settings";
+
+const EN_TRANSLATIONS: Record<string, string> = {
+  "Voltar": "Back",
+  "Buscar...": "Search...",
+  "Salvar": "Save",
+  "Cancelar": "Cancel",
+  "Excluir": "Delete",
+  "Novo": "New",
+  "Menu": "Menu",
+  "Sair": "Sign out",
+  "Dashboard": "Dashboard",
+  "Funcionários": "Employees",
+  "Registro de Ponto": "Time Tracking",
+  "Folha de Pagamento": "Payroll",
+  "Obras": "Projects",
+  "Despesas": "Expenses",
+  "Pagamentos Recebidos": "Received Payments",
+  "Clientes": "Clients",
+  "Produtos & Insumos": "Products & Materials",
+  "Relatórios": "Reports",
+  "Usuários": "Users",
+  "Configurações": "Settings",
+  "Minhas Horas": "My Hours",
+  "Meus Pagamentos": "My Payments",
+  "Entrar": "Sign in",
+  "E-mail": "Email",
+  "Senha": "Password",
+  "Nome": "Name",
+  "Perfil": "Role",
+  "Funcionário": "Employee",
+  "Administrador": "Administrator",
+  "Gerente": "Manager",
+  "Proprietário": "Owner",
+  "Data": "Date",
+  "Obra": "Project",
+  "Horas": "Hours",
+  "Valor": "Value",
+  "Descrição": "Description",
+  "Período": "Period",
+  "Forma": "Method",
+  "Status": "Status",
+  "Observações": "Notes",
+  "Categoria": "Category",
+  "Responsável": "Responsible",
+  "Data início": "Start date",
+  "Data fim": "End date",
+  "Data Início": "Start date",
+  "Data Fim": "End date",
+  "Limpar filtros": "Clear filters",
+  "Resumo": "Summary",
+  "Histórico": "History",
+  "Faturamento": "Revenue",
+  "Lucro líquido": "Net profit",
+  "Total gastos": "Total expenses",
+  "Obras ativas": "Active projects",
+  "Moeda": "Currency",
+  "Linguagem do portal": "Portal language",
+  "Salvar configurações": "Save settings",
+  "Configurações do Tenant": "Tenant Settings",
+  "Preferências do portal": "Portal preferences",
+  "Configurações do tenant atualizadas": "Tenant settings updated",
+  "Falha ao salvar configurações": "Failed to save settings",
+  "Reais": "Brazilian Real",
+  "Dolar": "Dollar",
+  "Euro": "Euro",
+  "Peso": "Peso",
+  "Portugues": "Portuguese",
+  "Ingles": "English",
+  "Frances": "French",
+  "Alemao": "German",
+  "Espanhol": "Spanish",
+  "hora": "hour",
+  "diaria": "day",
+  "mensal": "month",
+  "ativo": "active",
+  "afastado": "leave",
+  "desligado": "inactive",
+  "orcamento": "budget",
+  "em_andamento": "in progress",
+  "pausada": "paused",
+  "concluida": "completed",
+  "cancelada": "cancelled",
+  "combustivel": "fuel",
+  "alimentacao": "food",
+  "hospedagem": "lodging",
+  "outros": "others",
+  "funcionario": "employee",
+  "admin": "administrator",
+  "gerente": "manager",
+  "proprietario": "owner",
+  "vale": "advance",
+  "pagamento": "payment",
+  "pix": "pix",
+  "transferencia": "transfer",
+  "dinheiro": "cash",
+};
+
+const FR_TRANSLATIONS: Record<string, string> = {
+  "Voltar": "Retour",
+  "Salvar": "Enregistrer",
+  "Cancelar": "Annuler",
+  "Excluir": "Supprimer",
+  "Novo": "Nouveau",
+  "Sair": "Se déconnecter",
+  "Dashboard": "Tableau de bord",
+  "Funcionários": "Employés",
+  "Obras": "Chantiers",
+  "Despesas": "Dépenses",
+  "Clientes": "Clients",
+  "Relatórios": "Rapports",
+  "Configurações": "Paramètres",
+  "Data": "Date",
+  "Valor": "Valeur",
+  "Status": "Statut",
+  "Moeda": "Devise",
+  "Linguagem do portal": "Langue du portail",
+  "Salvar configurações": "Enregistrer les paramètres",
+  "Portugues": "Portugais",
+  "Ingles": "Anglais",
+  "Frances": "Français",
+  "Alemao": "Allemand",
+  "Espanhol": "Espagnol",
+};
+
+const DE_TRANSLATIONS: Record<string, string> = {
+  "Voltar": "Zurück",
+  "Salvar": "Speichern",
+  "Cancelar": "Abbrechen",
+  "Excluir": "Löschen",
+  "Novo": "Neu",
+  "Sair": "Abmelden",
+  "Dashboard": "Dashboard",
+  "Funcionários": "Mitarbeiter",
+  "Obras": "Projekte",
+  "Despesas": "Ausgaben",
+  "Clientes": "Kunden",
+  "Relatórios": "Berichte",
+  "Configurações": "Einstellungen",
+  "Data": "Datum",
+  "Valor": "Wert",
+  "Status": "Status",
+  "Moeda": "Währung",
+  "Linguagem do portal": "Portalsprache",
+  "Salvar configurações": "Einstellungen speichern",
+  "Portugues": "Portugiesisch",
+  "Ingles": "Englisch",
+  "Frances": "Französisch",
+  "Alemao": "Deutsch",
+  "Espanhol": "Spanisch",
+};
+
+const ES_TRANSLATIONS: Record<string, string> = {
+  "Voltar": "Volver",
+  "Salvar": "Guardar",
+  "Cancelar": "Cancelar",
+  "Excluir": "Eliminar",
+  "Novo": "Nuevo",
+  "Sair": "Cerrar sesión",
+  "Dashboard": "Panel",
+  "Funcionários": "Empleados",
+  "Obras": "Obras",
+  "Despesas": "Gastos",
+  "Clientes": "Clientes",
+  "Relatórios": "Informes",
+  "Configurações": "Configuración",
+  "Data": "Fecha",
+  "Valor": "Valor",
+  "Status": "Estado",
+  "Moeda": "Moneda",
+  "Linguagem do portal": "Idioma del portal",
+  "Salvar configurações": "Guardar configuración",
+  "Portugues": "Portugués",
+  "Ingles": "Inglés",
+  "Frances": "Francés",
+  "Alemao": "Alemán",
+  "Espanhol": "Español",
+};
+
+function interpolate(template: string, vars?: Record<string, string | number>) {
+  if (!vars) return template;
+  return Object.entries(vars).reduce((acc, [key, value]) => acc.replaceAll(`{${key}}`, String(value)), template);
+}
+
+export function useI18n() {
+  const { settings } = useTenantSettings();
+  const lang = (settings.language_code || "pt-BR").toLowerCase();
+
+  const dictionary = useMemo(() => {
+    if (lang.startsWith("pt")) return null;
+    if (lang.startsWith("en")) return EN_TRANSLATIONS;
+    if (lang.startsWith("fr")) return FR_TRANSLATIONS;
+    if (lang.startsWith("de")) return DE_TRANSLATIONS;
+    if (lang.startsWith("es")) return ES_TRANSLATIONS;
+    return null;
+  }, [lang]);
+
+  return useMemo(() => ({
+    // Portuguese always shows original source text.
+    // For other languages, translate known keys and keep source text as fallback.
+    t: (text: string, vars?: Record<string, string | number>) => interpolate(dictionary?.[text] ?? text, vars),
+    tEnum: (value: string | null | undefined, fallback = "-") => {
+      if (!value) return fallback;
+      return dictionary?.[value] ?? value.replaceAll("_", " ");
+    },
+    isEnglish: lang.startsWith("en"),
+  }), [dictionary, lang]);
+}

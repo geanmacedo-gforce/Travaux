@@ -1,0 +1,5 @@
+auth_info_baileys/
+auth_info_baileys_backup_*/
+.env
+.env.*
+*.local
