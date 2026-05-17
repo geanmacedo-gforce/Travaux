@@ -336,6 +336,16 @@ async function ensureBotLoggingSchema() {
   );
 }
 
+function shouldRunSchemaBootstrap() {
+  const explicit = process.env.BOT_SCHEMA_BOOTSTRAP;
+
+  if (explicit !== undefined) {
+    return ['1', 'true', 'yes', 'on'].includes(String(explicit).trim().toLowerCase());
+  }
+
+  return process.env.NODE_ENV !== 'production';
+}
+
 function formatMinutesAsClock(totalMinutes) {
   const safeMinutes = Math.max(0, Math.round(Number(totalMinutes) || 0));
   const hours = Math.floor(safeMinutes / 60);
@@ -801,7 +811,11 @@ async function registrarCheckin({ from, msg, estado, obra, localizacao, validaca
 let sock = null;
 
 async function connectToWhatsApp() {
-  await ensureBotLoggingSchema();
+  if (shouldRunSchemaBootstrap()) {
+    await ensureBotLoggingSchema();
+  } else {
+    console.log('[BOT_SCHEMA] Auto schema bootstrap desativado. Usando schema existente.');
+  }
 
   const suporteLoc = await detectarSuporteLocalizacao();
   if (suporteLoc.hasCoordinates) {
