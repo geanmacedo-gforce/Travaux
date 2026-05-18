@@ -11,6 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { PageHeader, SearchBar, FormDialog, ConfirmDelete, NewButton } from "@/components/crud";
 import { maskCPFCNPJ, maskPhone, fmtBRL } from "@/lib/format";
 import { toast } from "sonner";
@@ -162,9 +163,16 @@ function Page() {
                 <TableCell>{fmtBRL(r.valor)}/{r.tipo_remuneracao === "hora" ? t("hora") : r.tipo_remuneracao === "diaria" ? t("diaria") : t("mensal")}</TableCell>
                 <TableCell className="capitalize">{tEnum(r.status)}</TableCell>
                 <TableCell className="text-right inline-flex items-center gap-1 justify-end w-full">
-                  <Button size="sm" variant="ghost" onClick={() => openEdit(r)} aria-label={t("Editar funcionário")}>
-                    <Pencil className="h-4 w-4" />
-                  </Button>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button size="sm" variant="ghost" onClick={() => openEdit(r)} aria-label={t("Editar funcionário")}>
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>{t("Editar funcionário")}</TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
                   <ConfirmDelete onConfirm={() => del(r.id)} />
                 </TableCell>
               </TableRow>

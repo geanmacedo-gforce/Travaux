@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { PageHeader, SearchBar, FormDialog, ConfirmDelete, NewButton } from "@/components/crud";
 import { fmtBRL, fmtDate } from "@/lib/format";
 import { toast } from "sonner";
@@ -193,7 +194,19 @@ function Page() {
                 <TableCell>{fmtBRL(r.valor_contratado)}</TableCell>
                 <TableCell><Badge className={STATUS_COLOR[r.status]}>{tEnum(r.status)}</Badge></TableCell>
                 <TableCell>{fmtDate(r.data_inicio)}</TableCell>
-                <TableCell className="text-right inline-flex items-center gap-1 justify-end w-full"><Button size="sm" variant="ghost" onClick={() => openEdit(r)} aria-label={t("Editar obra")}><Pencil className="h-4 w-4" /></Button><ConfirmDelete onConfirm={() => del(r.id)} /></TableCell>
+                <TableCell className="text-right inline-flex items-center gap-1 justify-end w-full">
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button size="sm" variant="ghost" onClick={() => openEdit(r)} aria-label={t("Editar obra")}>
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>{t("Editar obra")}</TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                  <ConfirmDelete onConfirm={() => del(r.id)} />
+                </TableCell>
               </TableRow>
             ))}
             {filtered.length === 0 && <TableRow><TableCell colSpan={7} className="text-center py-8 text-muted-foreground">{t("Nenhuma obra.")}</TableCell></TableRow>}

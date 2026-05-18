@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { PageHeader, SearchBar, FormDialog, ConfirmDelete, NewButton } from "@/components/crud";
 import { maskCPFCNPJ, maskPhone, maskCEP } from "@/lib/format";
 import { toast } from "sonner";
@@ -133,9 +134,27 @@ function ClientesPage() {
                 <TableCell>{r.documento}</TableCell>
                 <TableCell>{r.telefone}</TableCell>
                 <TableCell>{r.cidade}</TableCell>
-                <TableCell className="text-right space-x-1">
-                  <Button size="sm" variant="ghost" onClick={() => openEdit(r)} aria-label={t("Editar cliente")}><Pencil className="h-4 w-4" /></Button>
-                  <Button size="sm" variant="ghost" onClick={() => archive(r)}><Archive className="h-3 w-3 mr-1" />{r.arquivado ? t("Desarquivar") : t("Arquivar")}</Button>
+                <TableCell className="text-right inline-flex items-center gap-1 justify-end w-full">
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button size="sm" variant="ghost" onClick={() => openEdit(r)} aria-label={t("Editar cliente")}>
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>{t("Editar cliente")}</TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button size="sm" variant="ghost" onClick={() => archive(r)} aria-label={r.arquivado ? t("Desarquivar") : t("Arquivar")}>
+                          <Archive className="h-4 w-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>{r.arquivado ? t("Desarquivar") : t("Arquivar")}</TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
                   <ConfirmDelete onConfirm={() => del(r.id)} />
                 </TableCell>
               </TableRow>

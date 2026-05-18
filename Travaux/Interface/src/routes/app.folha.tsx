@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth-context";
 import { serverQuery } from "@/lib/server-api";
@@ -11,10 +11,11 @@ import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { PageHeader, FormDialog, ConfirmDelete } from "@/components/crud";
 import { fmtBRL, fmtDate, fmtHours } from "@/lib/format";
 import { toast } from "sonner";
-import { Pencil, Clock, Wallet, Building2, ChevronDown } from "lucide-react";
+import { Pencil, Clock, Wallet, Building2, ChevronDown, Check } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { useI18n } from "@/lib/i18n";
@@ -73,6 +74,25 @@ function Page() {
   const [editId, setEditId] = useState<string | null>(null);
   const [payForm, setPayForm] = useState<any>({ funcionario_id: "", valor: 0, data_pagamento: formatLocalDate(today), forma: "pix", periodo_inicio: inicio, periodo_fim: fim, status: "pago" });
   const [valeForm, setValeForm] = useState<any>({ funcionario_id: "", valor: 0, data_pagamento: formatLocalDate(today) });
+  const funcFilterRef = useRef<HTMLDivElement | null>(null);
+  const obraFilterRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (funcFilterOpen && funcFilterRef.current && !funcFilterRef.current.contains(target)) {
+        setFuncFilterOpen(false);
+      }
+      if (obraFilterOpen && obraFilterRef.current && !obraFilterRef.current.contains(target)) {
+        setObraFilterOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [funcFilterOpen, obraFilterOpen]);
 
   const { data: funcs = [] } = useQuery({
     queryKey: ["funcs-folha", tenantId],
@@ -278,11 +298,29 @@ function Page() {
     setFuncFilters(next);
   };
 
+  const toggleAllFuncFilters = () => {
+    const allSelected = funcs.length > 0 && funcFilters.size === funcs.length;
+    if (allSelected) {
+      setFuncFilters(new Set());
+      return;
+    }
+    setFuncFilters(new Set(funcs.map((f: any) => f.id)));
+  };
+
   const toggleObraFilter = (obraId: string) => {
     const next = new Set(obraFilters);
     if (next.has(obraId)) next.delete(obraId);
     else next.add(obraId);
     setObraFilters(next);
+  };
+
+  const toggleAllObraFilters = () => {
+    const allSelected = obras.length > 0 && obraFilters.size === obras.length;
+    if (allSelected) {
+      setObraFilters(new Set());
+      return;
+    }
+    setObraFilters(new Set(obras.map((o: any) => o.id)));
   };
 
   const openPay = (l: any) => {
@@ -460,46 +498,60 @@ function Page() {
               <Label>{t("Data Fim")}</Label>
               <Input type="date" value={fim} onChange={(e)=>setFim(e.target.value)} />
             </div>
-            <Collapsible open={funcFilterOpen} onOpenChange={setFuncFilterOpen} className="relative self-end">
-              <CollapsibleTrigger asChild>
-                <Button variant="outline" className="w-full justify-between">
-                  <span>{t("Funcionário(s)")} {funcFilters.size > 0 && `(${funcFilters.size})`}</span>
-                  <ChevronDown className={`h-4 w-4 transition-transform ${funcFilterOpen ? "rotate-0" : "-rotate-90"}`} />
-                </Button>
-              </CollapsibleTrigger>
-              <CollapsibleContent className="absolute top-full left-0 right-0 z-20 mt-1 max-h-48 overflow-y-auto rounded-md border bg-background p-2 shadow-md">
-                {funcs.length === 0 ? (
-                  <div className="text-sm text-muted-foreground">{t("Nenhum funcionário")}</div>
-                ) : (
-                  funcs.map((f: any) => (
-                    <div key={f.id} className="flex items-center gap-2 py-1">
-                      <Checkbox checked={funcFilters.has(f.id)} onCheckedChange={() => toggleFuncFilter(f.id)} />
-                      <label className="text-sm cursor-pointer flex-1">{f.nome}</label>
-                    </div>
-                  ))
-                )}
-              </CollapsibleContent>
-            </Collapsible>
-            <Collapsible open={obraFilterOpen} onOpenChange={setObraFilterOpen} className="relative self-end">
-              <CollapsibleTrigger asChild>
-                <Button variant="outline" className="w-full justify-between">
-                  <span>{t("Obra(s)")} {obraFilters.size > 0 && `(${obraFilters.size})`}</span>
-                  <ChevronDown className={`h-4 w-4 transition-transform ${obraFilterOpen ? "rotate-0" : "-rotate-90"}`} />
-                </Button>
-              </CollapsibleTrigger>
-              <CollapsibleContent className="absolute top-full left-0 right-0 z-20 mt-1 max-h-48 overflow-y-auto rounded-md border bg-background p-2 shadow-md">
-                {obras.length === 0 ? (
-                  <div className="text-sm text-muted-foreground">{t("Nenhuma obra")}</div>
-                ) : (
-                  obras.map((o: any) => (
-                    <div key={o.id} className="flex items-center gap-2 py-1">
-                      <Checkbox checked={obraFilters.has(o.id)} onCheckedChange={() => toggleObraFilter(o.id)} />
-                      <label className="text-sm cursor-pointer flex-1">{o.nome}</label>
-                    </div>
-                  ))
-                )}
-              </CollapsibleContent>
-            </Collapsible>
+            <div ref={funcFilterRef} className="relative self-end">
+              <Collapsible open={funcFilterOpen} onOpenChange={setFuncFilterOpen}>
+                <CollapsibleTrigger asChild>
+                  <Button variant="outline" className="w-full justify-between">
+                    <span>{t("Funcionário(s)")} {funcFilters.size > 0 && `(${funcFilters.size})`}</span>
+                    <ChevronDown className={`h-4 w-4 transition-transform ${funcFilterOpen ? "rotate-0" : "-rotate-90"}`} />
+                  </Button>
+                </CollapsibleTrigger>
+                <CollapsibleContent className="absolute top-full left-0 right-0 z-20 mt-1 max-h-48 overflow-y-auto rounded-md border bg-background p-2 shadow-md">
+                  {funcs.length === 0 ? (
+                    <div className="text-sm text-muted-foreground">{t("Nenhum funcionário")}</div>
+                  ) : (
+                    <>
+                      <button type="button" className="w-full text-left text-xs font-medium text-primary py-1" onClick={toggleAllFuncFilters}>
+                        {funcFilters.size === funcs.length && funcs.length > 0 ? t("Limpar seleção") : t("Selecionar todos")}
+                      </button>
+                      {funcs.map((f: any) => (
+                        <div key={f.id} className="flex items-center gap-2 py-1">
+                          <Checkbox checked={funcFilters.has(f.id)} onCheckedChange={() => toggleFuncFilter(f.id)} />
+                          <button type="button" className="text-sm text-left cursor-pointer flex-1" onClick={() => toggleFuncFilter(f.id)}>{f.nome}</button>
+                        </div>
+                      ))}
+                    </>
+                  )}
+                </CollapsibleContent>
+              </Collapsible>
+            </div>
+            <div ref={obraFilterRef} className="relative self-end">
+              <Collapsible open={obraFilterOpen} onOpenChange={setObraFilterOpen}>
+                <CollapsibleTrigger asChild>
+                  <Button variant="outline" className="w-full justify-between">
+                    <span>{t("Obra(s)")} {obraFilters.size > 0 && `(${obraFilters.size})`}</span>
+                    <ChevronDown className={`h-4 w-4 transition-transform ${obraFilterOpen ? "rotate-0" : "-rotate-90"}`} />
+                  </Button>
+                </CollapsibleTrigger>
+                <CollapsibleContent className="absolute top-full left-0 right-0 z-20 mt-1 max-h-48 overflow-y-auto rounded-md border bg-background p-2 shadow-md">
+                  {obras.length === 0 ? (
+                    <div className="text-sm text-muted-foreground">{t("Nenhuma obra")}</div>
+                  ) : (
+                    <>
+                      <button type="button" className="w-full text-left text-xs font-medium text-primary py-1" onClick={toggleAllObraFilters}>
+                        {obraFilters.size === obras.length && obras.length > 0 ? t("Limpar seleção") : t("Selecionar todos")}
+                      </button>
+                      {obras.map((o: any) => (
+                        <div key={o.id} className="flex items-center gap-2 py-1">
+                          <Checkbox checked={obraFilters.has(o.id)} onCheckedChange={() => toggleObraFilter(o.id)} />
+                          <button type="button" className="text-sm text-left cursor-pointer flex-1" onClick={() => toggleObraFilter(o.id)}>{o.nome}</button>
+                        </div>
+                      ))}
+                    </>
+                  )}
+                </CollapsibleContent>
+              </Collapsible>
+            </div>
           </div>
 
           <div className="flex items-center gap-2">
@@ -510,7 +562,7 @@ function Page() {
           {view === "folha" ? (
             <div className="overflow-x-auto">
               <Table>
-                <TableHeader><TableRow><TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleFolhaSort("funcionario_nome")}>{t("Funcionário")} {folhaSortIndicator("funcionario_nome")}</Button></TableHead><TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleFolhaSort("totalH")}>{t("Horas")} {folhaSortIndicator("totalH")}</Button></TableHead><TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleFolhaSort("totalBruto")}>{t("Valor Total")} {folhaSortIndicator("totalBruto")}</Button></TableHead><TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleFolhaSort("totalVale")}>{t("Valor Vales")} {folhaSortIndicator("totalVale")}</Button></TableHead><TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleFolhaSort("saldo")}>{t("Saldo")} {folhaSortIndicator("saldo")}</Button></TableHead><TableHead className="text-right">{t("Ação")}</TableHead></TableRow></TableHeader>
+                <TableHeader><TableRow><TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleFolhaSort("funcionario_nome")}>{t("Funcionário")} {folhaSortIndicator("funcionario_nome")}</Button></TableHead><TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleFolhaSort("totalH")}>{t("Horas")} {folhaSortIndicator("totalH")}</Button></TableHead><TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleFolhaSort("totalBruto")}>{t("Valor Total")} {folhaSortIndicator("totalBruto")}</Button></TableHead><TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleFolhaSort("totalVale")}>{t("Valor Vales")}{folhaSortIndicator("totalVale")}</Button></TableHead><TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleFolhaSort("saldo")}>{t("Saldo")} {folhaSortIndicator("saldo")}</Button></TableHead><TableHead className="text-right"></TableHead></TableRow></TableHeader>
                 <TableBody>
                   {linhasOrdenadas.map((l) => (
                     <TableRow key={l.funcionario.id}>
@@ -520,9 +572,27 @@ function Page() {
                       <TableCell>{fmtBRL(l.totalVale)}</TableCell>
                       <TableCell>{fmtBRL(l.saldo)}</TableCell>
                       <TableCell className="text-right">
-                        <div className="inline-flex items-center gap-2">
-                          <Button size="sm" variant="outline" onClick={()=>openVale(l)}>{t("Fazer vale")}</Button>
-                          <Button size="sm" onClick={()=>openPay(l)}>{t("Marcar como pago")}</Button>
+                        <div className="inline-flex items-center gap-1">
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button size="sm" variant="ghost" onClick={()=>openVale(l)} aria-label={t("Fazer vale")}>
+                                  <Wallet className="h-4 w-4" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>{t("Fazer vale")}</TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button size="sm" variant="ghost" onClick={()=>openPay(l)} aria-label={t("Marcar como pago")}>
+                                  <Check className="h-4 w-4" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>{t("Marcar como pago")}</TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
                         </div>
                       </TableCell>
                     </TableRow>
@@ -546,7 +616,14 @@ function Page() {
                       <TableCell className="capitalize">{tEnum(p.forma)}</TableCell>
                       <TableCell><Badge className={p.status==="pago"?"bg-success/20 text-success":"bg-warning/20"}>{tEnum(p.status)}</Badge></TableCell>
                       <TableCell className="text-right inline-flex items-center gap-1 justify-end w-full">
-                        <Button size="sm" variant="ghost" onClick={()=>openEdit(p)} aria-label={t("Editar pagamento")}><Pencil className="h-4 w-4" /></Button>
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button size="sm" variant="ghost" onClick={()=>openEdit(p)} aria-label={t("Editar pagamento")}><Pencil className="h-4 w-4" /></Button>
+                            </TooltipTrigger>
+                            <TooltipContent>{t("Editar pagamento")}</TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
                         <ConfirmDelete onConfirm={()=>delPay(p.id)} />
                       </TableCell>
                     </TableRow>

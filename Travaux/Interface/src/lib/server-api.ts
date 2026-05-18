@@ -65,8 +65,18 @@ function generateTempPassword(length = 10): string {
 }
 
 const serverResetUserPasswordFn = createServerFn({ method: 'POST' }).handler(
-  async ({ data }: { data: { userId: string; tenantId: string } }) => {
-    const { updateUserPassword } = await import('@/lib/auth');
+  async ({ data }: { data: { userId: string; tenantId: string; actorUserId: string; actorPassword: string } }) => {
+    const { findUserById, verifyPassword, updateUserPassword } = await import('@/lib/auth');
+    const actor = await findUserById(data.actorUserId, data.tenantId);
+    if (!actor) {
+      throw new Error('Usuario autenticado nao encontrado');
+    }
+
+    const actorPasswordOk = await verifyPassword(data.actorPassword, actor.password_hash);
+    if (!actorPasswordOk) {
+      throw new Error('Senha atual invalida');
+    }
+
     const newPassword = generateTempPassword();
     const ok = await updateUserPassword(data.userId, newPassword, data.tenantId);
     if (!ok) {
@@ -125,7 +135,7 @@ export async function serverChangeUserRole(payload: { userId: string; role: stri
   return serverChangeUserRoleFn({ data: payload });
 }
 
-export async function serverResetUserPassword(payload: { userId: string; tenantId: string }) {
+export async function serverResetUserPassword(payload: { userId: string; tenantId: string; actorUserId: string; actorPassword: string }) {
   return serverResetUserPasswordFn({ data: payload });
 }
 

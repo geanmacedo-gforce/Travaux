@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth-context";
 import { serverQuery } from "@/lib/server-api";
@@ -16,6 +16,7 @@ import { toast } from "sonner";
 import { Pencil, Trash2, Clock, Calendar, Users, ChevronDown } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useI18n } from "@/lib/i18n";
 
 export const Route = createFileRoute("/app/registro-pontos")({ component: Page });
@@ -82,6 +83,25 @@ function Page() {
     saida: "",
     almoco_minutos: "30",
   });
+  const funcFilterRef = useRef<HTMLDivElement | null>(null);
+  const obraFilterRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (funcFilterOpen && funcFilterRef.current && !funcFilterRef.current.contains(target)) {
+        setFuncFilterOpen(false);
+      }
+      if (obraFilterOpen && obraFilterRef.current && !obraFilterRef.current.contains(target)) {
+        setObraFilterOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [funcFilterOpen, obraFilterOpen]);
 
   const { data: funcs = [] } = useQuery({
     queryKey: ["funcs-ponto", tenantId],
@@ -225,6 +245,15 @@ function Page() {
     setFuncFilters(newFilters);
   };
 
+  const toggleAllFuncFilters = () => {
+    const allSelected = funcs.length > 0 && funcFilters.size === funcs.length;
+    if (allSelected) {
+      setFuncFilters(new Set());
+      return;
+    }
+    setFuncFilters(new Set(funcs.map((f: any) => f.id)));
+  };
+
   const toggleObraFilter = (obraId: string) => {
     const newFilters = new Set(obraFilters);
     if (newFilters.has(obraId)) {
@@ -233,6 +262,15 @@ function Page() {
       newFilters.add(obraId);
     }
     setObraFilters(newFilters);
+  };
+
+  const toggleAllObraFilters = () => {
+    const allSelected = obras.length > 0 && obraFilters.size === obras.length;
+    if (allSelected) {
+      setObraFilters(new Set());
+      return;
+    }
+    setObraFilters(new Set(obras.map((o: any) => o.id)));
   };
 
   const openNew = () => {
@@ -447,58 +485,72 @@ function Page() {
                 onChange={(e) => setDataFimFiltro(e.target.value)}
               />
             </div>
-            <Collapsible open={funcFilterOpen} onOpenChange={setFuncFilterOpen} className="relative self-end">
-              <CollapsibleTrigger asChild>
-                <Button
-                  variant="outline"
-                  className="w-full justify-between"
-                >
-                  <span>{t("Funcionário(s)")} {funcFilters.size > 0 && `(${funcFilters.size})`}</span>
-                  <ChevronDown className={`h-4 w-4 transition-transform ${funcFilterOpen ? 'rotate-0' : '-rotate-90'}`} />
-                </Button>
-              </CollapsibleTrigger>
-              <CollapsibleContent className="absolute top-full left-0 right-0 z-20 mt-1 max-h-48 overflow-y-auto rounded-md border bg-background p-2 shadow-md">
-                {funcs.length === 0 ? (
-                  <div className="text-sm text-muted-foreground">{t("Nenhum funcionário")}</div>
-                ) : (
-                  funcs.map((f: any) => (
-                    <div key={f.id} className="flex items-center gap-2 py-1">
-                      <Checkbox
-                        checked={funcFilters.has(f.id)}
-                        onCheckedChange={() => toggleFuncFilter(f.id)}
-                      />
-                      <label className="text-sm cursor-pointer flex-1">{f.nome}</label>
-                    </div>
-                  ))
-                )}
-              </CollapsibleContent>
-            </Collapsible>
-            <Collapsible open={obraFilterOpen} onOpenChange={setObraFilterOpen} className="relative self-end">
-              <CollapsibleTrigger asChild>
-                <Button
-                  variant="outline"
-                  className="w-full justify-between"
-                >
-                  <span>{t("Obra(s)")} {obraFilters.size > 0 && `(${obraFilters.size})`}</span>
-                  <ChevronDown className={`h-4 w-4 transition-transform ${obraFilterOpen ? 'rotate-0' : '-rotate-90'}`} />
-                </Button>
-              </CollapsibleTrigger>
-              <CollapsibleContent className="absolute top-full left-0 right-0 z-20 mt-1 max-h-48 overflow-y-auto rounded-md border bg-background p-2 shadow-md">
-                {obras.length === 0 ? (
-                  <div className="text-sm text-muted-foreground">{t("Nenhuma obra")}</div>
-                ) : (
-                  obras.map((o: any) => (
-                    <div key={o.id} className="flex items-center gap-2 py-1">
-                      <Checkbox
-                        checked={obraFilters.has(o.id)}
-                        onCheckedChange={() => toggleObraFilter(o.id)}
-                      />
-                      <label className="text-sm cursor-pointer flex-1">{o.nome}</label>
-                    </div>
-                  ))
-                )}
-              </CollapsibleContent>
-            </Collapsible>
+            <div ref={funcFilterRef} className="relative self-end">
+              <Collapsible open={funcFilterOpen} onOpenChange={setFuncFilterOpen}>
+                <CollapsibleTrigger asChild>
+                  <Button
+                    variant="outline"
+                    className="w-full justify-between"
+                  >
+                    <span>{t("Funcionário(s)")} {funcFilters.size > 0 && `(${funcFilters.size})`}</span>
+                    <ChevronDown className={`h-4 w-4 transition-transform ${funcFilterOpen ? 'rotate-0' : '-rotate-90'}`} />
+                  </Button>
+                </CollapsibleTrigger>
+                <CollapsibleContent className="absolute top-full left-0 right-0 z-20 mt-1 max-h-48 overflow-y-auto rounded-md border bg-background p-2 shadow-md">
+                  {funcs.length === 0 ? (
+                    <div className="text-sm text-muted-foreground">{t("Nenhum funcionário")}</div>
+                  ) : (
+                    <>
+                      <button type="button" className="w-full text-left text-xs font-medium text-primary py-1" onClick={toggleAllFuncFilters}>
+                        {funcFilters.size === funcs.length && funcs.length > 0 ? t("Limpar seleção") : t("Selecionar todos")}
+                      </button>
+                      {funcs.map((f: any) => (
+                        <div key={f.id} className="flex items-center gap-2 py-1">
+                          <Checkbox
+                            checked={funcFilters.has(f.id)}
+                            onCheckedChange={() => toggleFuncFilter(f.id)}
+                          />
+                          <button type="button" className="text-sm text-left cursor-pointer flex-1" onClick={() => toggleFuncFilter(f.id)}>{f.nome}</button>
+                        </div>
+                      ))}
+                    </>
+                  )}
+                </CollapsibleContent>
+              </Collapsible>
+            </div>
+            <div ref={obraFilterRef} className="relative self-end">
+              <Collapsible open={obraFilterOpen} onOpenChange={setObraFilterOpen}>
+                <CollapsibleTrigger asChild>
+                  <Button
+                    variant="outline"
+                    className="w-full justify-between"
+                  >
+                    <span>{t("Obra(s)")} {obraFilters.size > 0 && `(${obraFilters.size})`}</span>
+                    <ChevronDown className={`h-4 w-4 transition-transform ${obraFilterOpen ? 'rotate-0' : '-rotate-90'}`} />
+                  </Button>
+                </CollapsibleTrigger>
+                <CollapsibleContent className="absolute top-full left-0 right-0 z-20 mt-1 max-h-48 overflow-y-auto rounded-md border bg-background p-2 shadow-md">
+                  {obras.length === 0 ? (
+                    <div className="text-sm text-muted-foreground">{t("Nenhuma obra")}</div>
+                  ) : (
+                    <>
+                      <button type="button" className="w-full text-left text-xs font-medium text-primary py-1" onClick={toggleAllObraFilters}>
+                        {obraFilters.size === obras.length && obras.length > 0 ? t("Limpar seleção") : t("Selecionar todos")}
+                      </button>
+                      {obras.map((o: any) => (
+                        <div key={o.id} className="flex items-center gap-2 py-1">
+                          <Checkbox
+                            checked={obraFilters.has(o.id)}
+                            onCheckedChange={() => toggleObraFilter(o.id)}
+                          />
+                          <button type="button" className="text-sm text-left cursor-pointer flex-1" onClick={() => toggleObraFilter(o.id)}>{o.nome}</button>
+                        </div>
+                      ))}
+                    </>
+                  )}
+                </CollapsibleContent>
+              </Collapsible>
+            </div>
           </div>
 
           {/* Tabela */}
@@ -513,7 +565,7 @@ function Page() {
                   <TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleSort("funcionario_nome")}>{t("Funcionário")} {sortIndicator("funcionario_nome")}</Button></TableHead>
                   <TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleSort("obra_nome")}>{t("Obra")} {sortIndicator("obra_nome")}</Button></TableHead>
                   <TableHead>{t("Raio da Obra")}</TableHead>
-                  <TableHead className="text-right">{t("Ações")}</TableHead>
+                  <TableHead className="text-right"></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -538,7 +590,7 @@ function Page() {
                       <TableCell>
                         {statusRaio === "fora_raio" ? (
                           <div className="space-y-1">
-                            <Badge variant="destructive">{t("Fora do raio")}</Badge>
+                            <Badge className="bg-red-100 text-red-700 border-red-200 dark:bg-red-950/30 dark:text-red-300 dark:border-red-900/40">{t("Fora do raio")}</Badge>
                             <div className="text-xs text-muted-foreground">
                               {t("Distância")}: {formatDistanceMeters(p.distancia_metros)}
                             </div>
@@ -551,13 +603,21 @@ function Page() {
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex gap-2 justify-end">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => openEdit(p)}
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </Button>
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => openEdit(p)}
+                                  aria-label={t("Editar registro")}
+                                >
+                                  <Pencil className="h-4 w-4" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>{t("Editar registro")}</TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
                           <ConfirmDelete onConfirm={() => deletePonto(p.id)} />
                         </div>
                       </TableCell>

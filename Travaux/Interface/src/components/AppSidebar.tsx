@@ -87,9 +87,21 @@ const items: MenuItemOrGroup[] = [
     roles: ["proprietario", "admin", "gerente"],
     items: [
       {
-        title: "Cadastro",
+        title: "Clientes",
+        url: "/app/clientes",
+        icon: Users,
+        roles: ["proprietario", "admin", "gerente"],
+      },
+      {
+        title: "Cadastro Obras",
         url: "/app/obras",
         icon: Building2,
+        roles: ["proprietario", "admin", "gerente"],
+      },
+      {
+        title: "Produtos e Insumos",
+        url: "/app/produtos",
+        icon: Package,
         roles: ["proprietario", "admin", "gerente"],
       },
       {
@@ -105,18 +117,6 @@ const items: MenuItemOrGroup[] = [
         roles: ["proprietario", "admin", "gerente"],
       },
     ],
-  },
-  {
-    title: "Clientes",
-    url: "/app/clientes",
-    icon: Users,
-    roles: ["proprietario", "admin", "gerente"],
-  },
-  {
-    title: "Produtos & Insumos",
-    url: "/app/produtos",
-    icon: Package,
-    roles: ["proprietario", "admin", "gerente"],
   },
   {
     title: "Relatórios",

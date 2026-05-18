@@ -11,6 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { PageHeader, FormDialog, ConfirmDelete } from "@/components/crud";
 import { fmtBRL, fmtDate } from "@/lib/format";
 import { toast } from "sonner";
@@ -304,7 +305,7 @@ function Page() {
                     <TableHead>{t("Contratado")}</TableHead>
                     <TableHead>{t("Recebido (período)")}</TableHead>
                     <TableHead>{t("Saldo")}</TableHead>
-                    <TableHead className="text-right">{t("Ação")}</TableHead>
+                    <TableHead className="text-right"></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -317,8 +318,17 @@ function Page() {
                       <TableCell>{fmtBRL(l.totalContratado)}</TableCell>
                       <TableCell>{fmtBRL(l.totalRecebido)}</TableCell>
                       <TableCell>{fmtBRL(l.saldo)}</TableCell>
-                      <TableCell className="text-right">
-                        <Button size="sm" onClick={() => openNew(l.obra.id, l.saldo)}>{t("Registrar recebimento")}</Button>
+                      <TableCell className="text-right inline-flex items-center gap-1 justify-end w-full">
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button size="sm" variant="ghost" onClick={() => openNew(l.obra.id, l.saldo)} aria-label={t("Registrar recebimento")}>
+                                <Wallet className="h-4 w-4" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>{t("Registrar recebimento")}</TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -352,7 +362,16 @@ function Page() {
                       <TableCell className="capitalize">{tEnum(r.forma)}</TableCell>
                       <TableCell className="max-w-[360px] truncate">{r.observacoes || "-"}</TableCell>
                       <TableCell className="text-right inline-flex items-center gap-1 justify-end w-full">
-                        <Button size="sm" variant="ghost" onClick={() => openEdit(r)} aria-label={t("Editar recebimento")}><Pencil className="h-4 w-4" /></Button>
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button size="sm" variant="ghost" onClick={() => openEdit(r)} aria-label={t("Editar recebimento")}>
+                                <Pencil className="h-4 w-4" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>{t("Editar recebimento")}</TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
                         <ConfirmDelete onConfirm={() => del(r.id)} />
                       </TableCell>
                     </TableRow>
