@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { fmtDateTime } from "@/lib/format";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/app/financeiro")({ component: Page });
@@ -212,7 +213,7 @@ function Page() {
                     <TableCell>
                       <Badge variant="secondary">{row.status}</Badge>
                     </TableCell>
-                    <TableCell>{row.pago_em ? new Date(row.pago_em).toLocaleString("pt-BR") : "-"}</TableCell>
+                    <TableCell>{fmtDateTime(row.pago_em)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>

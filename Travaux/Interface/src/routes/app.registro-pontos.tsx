@@ -11,7 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader, FormDialog, ConfirmDelete } from "@/components/crud";
-import { fmtHours } from "@/lib/format";
+import { fmtDate, fmtDateTime, fmtDateTimeInputValue, fmtHours } from "@/lib/format";
 import { toast } from "sonner";
 import { Pencil, Trash2, Clock, Calendar, Users, ChevronDown } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -42,10 +42,10 @@ function normalizeDateTimeInput(value: any) {
   const raw = String(value).trim();
   const normalized = raw.replace(" ", "T");
   if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(normalized)) {
-    return normalized.slice(0, 16);
+    return fmtDateTimeInputValue(normalized);
   }
   const dt = new Date(raw);
-  if (!Number.isNaN(dt.getTime())) return formatLocalDateTime(dt);
+  if (!Number.isNaN(dt.getTime())) return fmtDateTimeInputValue(dt);
   return "";
 }
 
@@ -211,7 +211,7 @@ function Page() {
     const diasUnicos = new Set(
       pontosFiltrados.map((p: any) => {
         if (p.entrada) {
-          return formatLocalDate(new Date(p.entrada));
+          return fmtDate(p.entrada);
         }
         return "";
       })
@@ -570,16 +570,14 @@ function Page() {
               </TableHeader>
               <TableBody>
                 {pontosOrdenados.map((p: any) => {
-                  const entrada = p.entrada ? new Date(p.entrada) : null;
-                  const saida = p.saida ? new Date(p.saida) : null;
                   const statusRaio = String(p.status_raio || "sem_validacao");
                   return (
                     <TableRow key={p.id}>
                       <TableCell className="text-sm">
-                        {entrada ? entrada.toLocaleString("pt-BR") : "-"}
+                        {fmtDateTime(p.entrada)}
                       </TableCell>
                       <TableCell className="text-sm">
-                        {saida ? saida.toLocaleString("pt-BR") : "-"}
+                        {fmtDateTime(p.saida)}
                       </TableCell>
                       <TableCell>{p.almoco_minutos ?? 60} min</TableCell>
                       <TableCell>

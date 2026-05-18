@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { PageHeader } from "@/components/crud";
 import { RequireAuth } from "@/components/RequireAuth";
-import { CURRENCY_OPTIONS, LANGUAGE_OPTIONS, useTenantSettings } from "@/lib/tenant-settings";
+import { CURRENCY_OPTIONS, LANGUAGE_OPTIONS, TIMEZONE_OPTIONS, useTenantSettings } from "@/lib/tenant-settings";
 import { toast } from "sonner";
 import { useI18n } from "@/lib/i18n";
 
@@ -25,6 +25,7 @@ function Page() {
   const [form, setForm] = useState({
     currency_code: settings.currency_code,
     language_code: settings.language_code,
+    timezone_code: settings.timezone_code,
     bot_permite_checkin_fora_raio: settings.bot_permite_checkin_fora_raio,
   });
   const [saving, setSaving] = useState(false);
@@ -33,9 +34,10 @@ function Page() {
     setForm({
       currency_code: settings.currency_code,
       language_code: settings.language_code,
+      timezone_code: settings.timezone_code,
       bot_permite_checkin_fora_raio: settings.bot_permite_checkin_fora_raio,
     });
-  }, [settings.currency_code, settings.language_code, settings.bot_permite_checkin_fora_raio]);
+  }, [settings.currency_code, settings.language_code, settings.timezone_code, settings.bot_permite_checkin_fora_raio]);
 
   const onSave = async () => {
     setSaving(true);
@@ -94,6 +96,28 @@ function Page() {
                 </SelectTrigger>
                 <SelectContent>
                   {LANGUAGE_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {t(option.label)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div>
+              <Label>{t("Fuso horário")}</Label>
+              <Select
+                value={form.timezone_code}
+                onValueChange={(value) =>
+                  setForm({ ...form, timezone_code: value as typeof form.timezone_code })
+                }
+                disabled={loading || saving}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {TIMEZONE_OPTIONS.map((option) => (
                     <SelectItem key={option.value} value={option.value}>
                       {t(option.label)}
                     </SelectItem>

@@ -32,6 +32,14 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
+    const remoteAddress = req.socket?.remoteAddress ?? null;
+    if (remoteAddress) {
+      headers.set("x-remote-address", remoteAddress);
+      if (!headers.get("x-forwarded-for") && !headers.get("x-real-ip") && !headers.get("cf-connecting-ip")) {
+        headers.set("x-socket-address", remoteAddress);
+      }
+    }
+
     const init = { method: req.method, headers };
     if (req.method && req.method !== "GET" && req.method !== "HEAD") {
       init.body = Readable.toWeb(req);

@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
-import { serverLogin, serverQueryOne } from "@/lib/server-api";
+import { serverLogin, serverLogout, serverQueryOne } from "@/lib/server-api";
 
 export type AppRole = "proprietario" | "admin" | "gerente" | "funcionario";
 
@@ -73,6 +73,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const isInactivityExpired = () => Date.now() - getLastActivity() > INACTIVITY_LIMIT_MS;
 
   const forceReloginByInactivity = async () => {
+    if (user?.id && user.tenant_id) {
+      try {
+        await serverLogout({ userId: user.id, tenantId: user.tenant_id, reason: "inactivity" });
+      } catch {
+        // no-op
+      }
+    }
+
     clearStoredSession();
     resetSessionState();
     if (inactivityToastShownRef.current) return;
@@ -278,6 +286,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signOut = async () => {
+    if (user?.id && user.tenant_id) {
+      try {
+        await serverLogout({ userId: user.id, tenantId: user.tenant_id, reason: "manual" });
+      } catch {
+        // no-op
+      }
+    }
+
     clearStoredSession();
     resetSessionState();
     inactivityToastShownRef.current = false;

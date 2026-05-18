@@ -34,6 +34,10 @@ loadEnvFile(process.env.BOT_ENV_FILE && process.env.BOT_ENV_FILE.trim());
 if (!process.env.BOT_ENV_FILE) {
   loadEnvFile(path.join(homeDir, '.travaux', 'bot.env'));
 }
+// Suporte a .env.local em desenvolvimento
+if (process.env.NODE_ENV !== 'production') {
+  loadEnvFile(path.join(__dirname, '.env.local'));
+}
 
 // Opções de almoço/pausa disponíveis (em minutos)
 const ALMOCO_OPTIONS = [
@@ -49,6 +53,7 @@ const estados = new Map();
 let pool = null;
 let suporteLocalizacaoCache = null;
 let botPermiteCheckinForaRaioColumnExistsCache = null;
+let tenantTimezoneCodeColumnExistsCache = null;
 let lidMappingCache = null;
 
 function normalizePhone(value) {
@@ -607,6 +612,24 @@ async function detectarColunaPermiteCheckinForaRaio() {
   return botPermiteCheckinForaRaioColumnExistsCache;
 }
 
+async function detectarColunaTimezoneCode() {
+  if (tenantTimezoneCodeColumnExistsCache !== null) {
+    return tenantTimezoneCodeColumnExistsCache;
+  }
+
+  const rows = await query(
+    `SELECT 1
+     FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'tenants'
+       AND COLUMN_NAME = 'timezone_code'
+     LIMIT 1`
+  );
+
+  tenantTimezoneCodeColumnExistsCache = rows.length > 0;
+  return tenantTimezoneCodeColumnExistsCache;
+}
+
 async function carregarContextoTelefone(telefone) {
   const telefoneNormalizado = normalizePhone(telefone);
   if (!telefoneNormalizado) return null;
@@ -636,6 +659,7 @@ async function carregarContextoTelefone(telefone) {
 
   const suporteLocalizacao = await detectarSuporteLocalizacao();
   const hasPermiteCheckinForaRaio = await detectarColunaPermiteCheckinForaRaio();
+  const hasTimezoneCode = await detectarColunaTimezoneCode();
 
   const obrasSql = suporteLocalizacao.hasCoordinates
     ? `SELECT o.id,
@@ -665,15 +689,31 @@ async function carregarContextoTelefone(telefone) {
   const obras = await query(obrasSql, [funcionario.tenant_id]);
 
   let permiteCheckinForaRaio = false;
-  if (hasPermiteCheckinForaRaio) {
+  let timezoneCode = 'America/Sao_Paulo';
+  if (hasPermiteCheckinForaRaio || hasTimezoneCode) {
+    const selectFields = [];
+    if (hasPermiteCheckinForaRaio) {
+      selectFields.push('COALESCE(bot_permite_checkin_fora_raio, 0) AS permite');
+    }
+    if (hasTimezoneCode) {
+      selectFields.push("COALESCE(timezone_code, 'America/Sao_Paulo') AS timezone_code");
+    }
+
     const tenantRows = await query(
-      `SELECT COALESCE(bot_permite_checkin_fora_raio, 0) AS permite
+      `SELECT ${selectFields.join(', ')}
          FROM tenants
         WHERE id = ?
         LIMIT 1`,
       [funcionario.tenant_id]
     );
-    permiteCheckinForaRaio = Boolean(Number(tenantRows[0]?.permite || 0));
+
+    if (hasPermiteCheckinForaRaio) {
+      permiteCheckinForaRaio = Boolean(Number(tenantRows[0]?.permite || 0));
+    }
+
+    if (hasTimezoneCode) {
+      timezoneCode = String(tenantRows[0]?.timezone_code || '').trim() || 'America/Sao_Paulo';
+    }
   }
 
   const funcionariosTenant = await query(
@@ -691,6 +731,7 @@ async function carregarContextoTelefone(telefone) {
     funcionarios: funcionariosTenant,
     suporteLocalizacao,
     permiteCheckinForaRaio,
+    timezoneCode,
   };
 }
 
@@ -707,6 +748,31 @@ function fmtMetros(metros) {
     return `${(metros / 1000).toFixed(2).replace('.', ',')} km`;
   }
   return `${Math.round(metros)} m`;
+}
+
+function formatarDataHoraUsuario(value, timezoneCode) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '-';
+  }
+
+  const options = {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  };
+
+  try {
+    return date.toLocaleString('pt-BR', {
+      ...options,
+      timeZone: timezoneCode || 'America/Sao_Paulo',
+    });
+  } catch {
+    return date.toLocaleString('pt-BR', options);
+  }
 }
 
 function validarLocalizacao(usuarioLat, usuarioLng, obraLat, obraLng, raio) {
@@ -790,14 +856,7 @@ async function registrarCheckin({ from, msg, estado, obra, localizacao, validaca
     console.log(`Localização: ${localizacao.lat.toFixed(4)}, ${localizacao.lng.toFixed(4)} - Distância da obra: ${validacao.distancia}m${divergencia ? ' [DIVERGÊNCIA]' : ''}`);
   }
 
-  const horarioFormatado = checkin.toLocaleString('pt-BR', {
-    day: '2-digit',
-    month: '2-digit', 
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit'
-  });
+  const horarioFormatado = formatarDataHoraUsuario(checkin, estado.contexto?.timezoneCode);
 
   const mensagem = divergencia
     ? `⚠️ Check-in registrado com divergência de localização.\n📍 Você estava a ${fmtMetros(validacao.distancia)} da obra (raio: ${fmtMetros(validacao.raio)})\n\n🏢 Obra: ${obraLabel}\n⏰ Horário: ${horarioFormatado}\n\nDigite *1* para fazer o checkout.`
@@ -1352,7 +1411,7 @@ async function connectToWhatsApp() {
           console.log(`CHECKOUT: ${from} saiu de ${estado.obraLabel}`);
           console.log(`Duração: ${estado.duracao}min | Almoço: ${almocoMinutos}min | Líquido: ${horaLiquidaMinutos}min (${horasFormatada})`);
 
-          const msg_fim = `✅ Registrado!\n\n🏢 ${estado.obraLabel}\n⏰ Entrada: ${estado.checkin.toLocaleString('pt-BR')}\n⏰ Saída: ${estado.checkout.toLocaleString('pt-BR')}\n🍽️ Almoço: ${almocoMinutos}min\n⏱️ Horas (hh:mm): ${horasFormatada}\n\nDigite *Bom dia* para novo check-in.`;
+          const msg_fim = `✅ Registrado!\n\n🏢 ${estado.obraLabel}\n⏰ Entrada: ${formatarDataHoraUsuario(estado.checkin, estado.contexto?.timezoneCode)}\n⏰ Saída: ${formatarDataHoraUsuario(estado.checkout, estado.contexto?.timezoneCode)}\n🍽️ Almoço: ${almocoMinutos}min\n⏱️ Horas (hh:mm): ${horasFormatada}\n\nDigite *Bom dia* para novo check-in.`;
 
           await sock.sendMessage(msg.key.remoteJid, { text: msg_fim });
           

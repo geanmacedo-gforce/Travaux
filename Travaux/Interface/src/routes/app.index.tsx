@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { serverQuery } from "@/lib/server-api";
 import { useAuth } from "@/lib/auth-context";
-import { fmtBRL, fmtHours } from "@/lib/format";
+import { fmtBRL, fmtDate, fmtHours } from "@/lib/format";
 import { Building2, Wallet, TrendingUp, TrendingDown, Clock } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from "recharts";
@@ -75,7 +75,7 @@ function DashboardPage() {
             <div className="divide-y">
               {(d.horas ?? []).slice(0, 8).map((h: any) => (
                 <div key={h.id} className="py-2 flex justify-between text-sm">
-                  <div><div className="font-medium">{h.obra_nome}</div><div className="text-muted-foreground text-xs">{new Date(h.data + "T00:00:00").toLocaleDateString()} · {h.descricao || "-"}</div></div>
+                  <div><div className="font-medium">{h.obra_nome}</div><div className="text-muted-foreground text-xs">{fmtDate(h.data)} · {h.descricao || "-"}</div></div>
                   <div className="text-right"><div>{fmtHours(h.horas)}</div><div className="text-xs text-muted-foreground">{fmtBRL(h.valor_total)}</div></div>
                 </div>
               ))}

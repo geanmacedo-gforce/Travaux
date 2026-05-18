@@ -1,15 +1,35 @@
-import { createFileRoute, Outlet } from "@tanstack/react-router";
+import { createFileRoute, Outlet, useRouterState } from "@tanstack/react-router";
+import { useEffect, useRef } from "react";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/AppSidebar";
 import { RequireAuth } from "@/components/RequireAuth";
 import logoMark from "@/assets/logo-mark.png";
 import { useI18n } from "@/lib/i18n";
 import { UserMenu } from "@/components/UserMenu";
+import { useAuth } from "@/lib/auth-context";
+import { serverLogPageAccess } from "@/lib/server-api";
 
 export const Route = createFileRoute("/app")({ component: AppLayout });
 
 function AppLayout() {
   const { t } = useI18n();
+  const { user } = useAuth();
+  const path = useRouterState({ select: (s) => s.location.pathname });
+  const lastLoggedPathRef = useRef<string>("");
+
+  useEffect(() => {
+    if (!user?.id || !user.tenant_id) return;
+    if (!path.startsWith("/app")) return;
+    if (lastLoggedPathRef.current === path) return;
+
+    lastLoggedPathRef.current = path;
+    void serverLogPageAccess({
+      userId: user.id,
+      tenantId: user.tenant_id,
+      path,
+    });
+  }, [path, user?.id, user?.tenant_id]);
+
   return (
     <RequireAuth>
       <SidebarProvider>

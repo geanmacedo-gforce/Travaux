@@ -1,9 +1,35 @@
 let activeLocale = "pt-BR";
 let activeCurrency = "BRL";
+let activeTimeZone = "America/Sao_Paulo";
 
-export function setFormatPreferences(input: { locale?: string; currency?: string }) {
+export function setFormatPreferences(input: { locale?: string; currency?: string; timezone?: string }) {
   activeLocale = input.locale || "pt-BR";
   activeCurrency = input.currency || "BRL";
+  activeTimeZone = input.timezone || "America/Sao_Paulo";
+}
+
+function parseDateInput(value: string | Date) {
+  if (value instanceof Date) return value;
+
+  const raw = String(value).trim();
+  if (!raw) return new Date(NaN);
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    return new Date(`${raw}T00:00:00`);
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?$/.test(raw)) {
+    // Treat SQL DATETIME without explicit offset as UTC.
+    return new Date(raw.replace(" ", "T") + "Z");
+  }
+
+  return new Date(raw);
+}
+
+function safeDate(value: string | Date | null | undefined) {
+  if (!value) return null;
+  const parsed = parseDateInput(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
 export const fmtBRL = (n: number | null | undefined) =>
@@ -11,8 +37,42 @@ export const fmtBRL = (n: number | null | undefined) =>
 
 export const fmtDate = (d: string | Date | null | undefined) => {
   if (!d) return "-";
-  const date = typeof d === "string" ? new Date(d + (d.length === 10 ? "T00:00:00" : "")) : d;
-  return date.toLocaleDateString(activeLocale);
+  const date = safeDate(d);
+  if (!date) return "-";
+  return date.toLocaleDateString(activeLocale, { timeZone: activeTimeZone });
+};
+
+export const fmtDateTime = (d: string | Date | null | undefined) => {
+  if (!d) return "-";
+  const date = safeDate(d);
+  if (!date) return "-";
+  return date.toLocaleString(activeLocale, {
+    timeZone: activeTimeZone,
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+};
+
+export const fmtDateTimeInputValue = (d: string | Date | null | undefined) => {
+  if (!d) return "";
+  const date = safeDate(d);
+  if (!date) return "";
+
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: activeTimeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+
+  const get = (type: Intl.DateTimeFormatPartTypes) => parts.find((p) => p.type === type)?.value ?? "00";
+  return `${get("year")}-${get("month")}-${get("day")}T${get("hour")}:${get("minute")}`;
 };
 
 export const fmtHours = (value: number | string | null | undefined) => {

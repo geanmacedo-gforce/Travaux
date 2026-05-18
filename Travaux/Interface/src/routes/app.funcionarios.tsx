@@ -27,6 +27,7 @@ const COUNTRY_CODES = [
   { code: "34", label: "Espanha (+34)" },
   { code: "351", label: "Portugal (+351)" },
   { code: "44", label: "Reino Unido (+44)" },
+  { code: "32", label: "Bélgica (+32)" },
   { code: "33", label: "França (+33)" },
   { code: "49", label: "Alemanha (+49)" },
   { code: "39", label: "Itália (+39)" },

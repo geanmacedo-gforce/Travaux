@@ -24,6 +24,7 @@ function getDbConfig(): mysql.PoolOptions {
         connectionLimit: parseInt(process.env.DB_POOL_MAX || '10', 10),
         queueLimit: 0,
         charset: 'utf8mb4',
+        dateStrings: true,
         enableKeepAlive: true,
         keepAliveInitialDelay: 0,
       };
@@ -42,6 +43,7 @@ function getDbConfig(): mysql.PoolOptions {
     connectionLimit: parseInt(process.env.DB_POOL_MAX || '10', 10),
     queueLimit: 0,
     charset: 'utf8mb4',
+    dateStrings: true,
     enableKeepAlive: true,
     keepAliveInitialDelay: 0,
   };

@@ -60,7 +60,7 @@ function Page() {
   const changeRole = async (uid: string, newRole: string) => {
     if (!tenantId) return toast.error(t("Tenant nao identificado na sessao."));
     try {
-      await serverChangeUserRole({ userId: uid, role: newRole, tenantId });
+      await serverChangeUserRole({ userId: uid, role: newRole, tenantId, actorUserId: user?.id });
     } catch (error) {
       return toast.error((error as Error).message);
     }
@@ -93,6 +93,7 @@ function Page() {
         role: form.role,
         funcionario_id: form.funcionario_id || undefined,
         tenantId,
+        actorUserId: user?.id,
       });
     } catch (error) {
       setBusy(false);
