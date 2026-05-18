@@ -6,6 +6,15 @@ import { Readable } from "node:stream";
 const port = Number(process.env.PORT || 3000);
 const host = process.env.HOST || "0.0.0.0";
 const distEntryPath = path.resolve(new URL("../dist/server/index.js", import.meta.url).pathname);
+const distClientPath = path.resolve(new URL("../dist/client", import.meta.url).pathname);
+
+console.log("[Travaux] server bootstrap", {
+  host,
+  port,
+  distEntryPath,
+  distClientPath,
+  cwd: process.cwd(),
+});
 
 if (!fs.existsSync(distEntryPath)) {
   throw new Error("Travaux build not found. Run npm run build before starting the server.");
@@ -21,6 +30,12 @@ if (!worker || typeof worker.fetch !== "function") {
 const server = http.createServer(async (req, res) => {
   try {
     const requestUrl = `http://${req.headers.host || `${host}:${port}`}${req.url || "/"}`;
+    console.log("[Travaux] request", {
+      method: req.method,
+      url: req.url,
+      host: req.headers.host,
+      remoteAddress: req.socket?.remoteAddress ?? null,
+    });
     const headers = new Headers();
 
     for (const [headerName, headerValue] of Object.entries(req.headers)) {
