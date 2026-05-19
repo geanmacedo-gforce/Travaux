@@ -34,8 +34,9 @@ loadEnvFile(process.env.BOT_ENV_FILE && process.env.BOT_ENV_FILE.trim());
 if (!process.env.BOT_ENV_FILE) {
   loadEnvFile(path.join(homeDir, '.travaux', 'bot.env'));
 }
-// .env.local tem prioridade quando existir, inclusive em testes locais.
-loadEnvFile(path.join(__dirname, '.env.local'), true);
+// .env.local tem prioridade quando existir, inclusive em testes locais (nunca obrigatório).
+const localEnvPath = path.join(__dirname, '.env.local');
+if (fs.existsSync(localEnvPath)) loadEnvFile(localEnvPath, true);
 
 // Opções de almoço/pausa disponíveis (em minutos)
 const ALMOCO_OPTIONS = [
