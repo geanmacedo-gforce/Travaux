@@ -6,21 +6,19 @@ import { useAuth } from "@/lib/auth-context";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { PageHeader } from "@/components/crud";
 import { fmtBRL } from "@/lib/format";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend, LineChart, Line, CartesianGrid } from "recharts";
 import { useI18n } from "@/lib/i18n";
+import { MultiSelectFilter } from "@/components/MultiSelectFilter";
 
 const BRAND_PRIMARY = "#E8620A";
 const BRAND_SECONDARY = "#1A1A1A";
 const PIE_COLORS = ["#E8620A","#1A1A1A","#9CA3AF","#F2A368","#4B5563","#FBBF24"];
 
 export const Route = createFileRoute("/app/relatorios")({ component: Page });
-
-const ALL = "__all__";
 
 function Page() {
   const { role, user } = useAuth();
@@ -30,9 +28,9 @@ function Page() {
   const today = new Date();
   const [inicio, setInicio] = useState(new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0, 10));
   const [fim, setFim] = useState(new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().slice(0, 10));
-  const [obraId, setObraId] = useState<string>(ALL);
-  const [funcionarioId, setFuncionarioId] = useState<string>(ALL);
-  const [clienteId, setClienteId] = useState<string>(ALL);
+  const [obraFilters, setObraFilters] = useState<Set<string>>(new Set());
+  const [funcionarioFilters, setFuncionarioFilters] = useState<Set<string>>(new Set());
+  const [clienteFilters, setClienteFilters] = useState<Set<string>>(new Set());
 
   const { data: lookups } = useQuery({
     queryKey: ["relatorios-lookups", tenantId],
@@ -76,24 +74,24 @@ function Page() {
   // Apply filters: cliente -> filtra obras; obra -> filtra registros; funcionario -> filtra horas
   const { obrasF, horasF, matsF, despF } = useMemo(() => {
     let obrasF = obrasAll as any[];
-    if (clienteId !== ALL) obrasF = obrasF.filter((o) => o.cliente_id === clienteId);
-    if (obraId !== ALL) obrasF = obrasF.filter((o) => o.id === obraId);
+    if (clienteFilters.size > 0) obrasF = obrasF.filter((o) => clienteFilters.has(o.cliente_id));
+    if (obraFilters.size > 0) obrasF = obrasF.filter((o) => obraFilters.has(o.id));
     const obraIds = new Set(obrasF.map((o) => o.id));
 
     let horasF = (horas as any[]).filter((h) => obraIds.has(h.obra_id));
-    if (funcionarioId !== ALL) horasF = horasF.filter((h) => h.funcionario_id === funcionarioId);
+    if (funcionarioFilters.size > 0) horasF = horasF.filter((h) => funcionarioFilters.has(h.funcionario_id));
 
     const matsF = (mats as any[]).filter((m) => obraIds.has(m.obra_id));
     const despF = (desp as any[]).filter((d) => obraIds.has(d.obra_id));
 
     // Se filtra por funcionário, restringe obras às que tiveram horas dele
     let obrasFinal = obrasF;
-    if (funcionarioId !== ALL) {
+    if (funcionarioFilters.size > 0) {
       const obrasComFunc = new Set(horasF.map((h) => h.obra_id));
       obrasFinal = obrasF.filter((o) => obrasComFunc.has(o.id));
     }
     return { obrasF: obrasFinal, horasF, matsF, despF };
-  }, [obrasAll, horas, mats, desp, obraId, funcionarioId, clienteId]);
+  }, [obrasAll, horas, mats, desp, obraFilters, funcionarioFilters, clienteFilters]);
 
   const totalMO = horasF.reduce((s, h: any) => s + Number(h.valor_total), 0);
   const totalMat = matsF.reduce((s, m: any) => s + Number(m.valor_total), 0);
@@ -132,7 +130,28 @@ function Page() {
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([data, valor]) => ({ data: data.slice(5), [t("Gastos")]: valor }));
 
-  const clearFilters = () => { setObraId(ALL); setFuncionarioId(ALL); setClienteId(ALL); };
+  const clearFilters = () => {
+    setObraFilters(new Set());
+    setFuncionarioFilters(new Set());
+    setClienteFilters(new Set());
+  };
+
+  const obraOptions = useMemo(
+    () => obrasAll
+      .filter((o: any) => clienteFilters.size === 0 || clienteFilters.has(o.cliente_id))
+      .map((o: any) => ({ value: o.id, label: o.nome })),
+    [obrasAll, clienteFilters],
+  );
+
+  const clienteOptions = useMemo(
+    () => clientesAll.map((c: any) => ({ value: c.id, label: c.nome })),
+    [clientesAll],
+  );
+
+  const funcionarioOptions = useMemo(
+    () => funcsAll.map((f: any) => ({ value: f.id, label: f.nome })),
+    [funcsAll],
+  );
 
   return (
     <div>
@@ -140,40 +159,35 @@ function Page() {
       <div className="grid gap-3 mb-4 md:grid-cols-5">
         <div><Label>{t("Início")}</Label><Input type="date" value={inicio} onChange={(e) => setInicio(e.target.value)} /></div>
         <div><Label>{t("Fim")}</Label><Input type="date" value={fim} onChange={(e) => setFim(e.target.value)} /></div>
-        <div>
-          <Label>{t("Cliente")}</Label>
-          <Select value={clienteId} onValueChange={setClienteId}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL}>{t("Todos")}</SelectItem>
-              {clientesAll.map((c: any) => <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>)}
-            </SelectContent>
-          </Select>
-        </div>
-        <div>
-          <Label>{t("Obra")}</Label>
-          <Select value={obraId} onValueChange={setObraId}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL}>{t("Todas")}</SelectItem>
-              {obrasAll.filter((o: any) => clienteId === ALL || o.cliente_id === clienteId).map((o: any) => (
-                <SelectItem key={o.id} value={o.id}>{o.nome}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div>
-          <Label>{t("Funcionário")}</Label>
-          <Select value={funcionarioId} onValueChange={setFuncionarioId}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL}>{t("Todos")}</SelectItem>
-              {funcsAll.map((f: any) => <SelectItem key={f.id} value={f.id}>{f.nome}</SelectItem>)}
-            </SelectContent>
-          </Select>
-        </div>
+        <MultiSelectFilter
+          title={t("Cliente(s)")}
+          options={clienteOptions}
+          selected={clienteFilters}
+          onChange={setClienteFilters}
+          emptyText={t("Nenhum cliente")}
+          selectAllText={t("Selecionar todos")}
+          clearSelectionText={t("Limpar seleção")}
+        />
+        <MultiSelectFilter
+          title={t("Obra(s)")}
+          options={obraOptions}
+          selected={obraFilters}
+          onChange={setObraFilters}
+          emptyText={t("Nenhuma obra")}
+          selectAllText={t("Selecionar todos")}
+          clearSelectionText={t("Limpar seleção")}
+        />
+        <MultiSelectFilter
+          title={t("Funcionário(s)")}
+          options={funcionarioOptions}
+          selected={funcionarioFilters}
+          onChange={setFuncionarioFilters}
+          emptyText={t("Nenhum funcionário")}
+          selectAllText={t("Selecionar todos")}
+          clearSelectionText={t("Limpar seleção")}
+        />
       </div>
-      {(obraId !== ALL || funcionarioId !== ALL || clienteId !== ALL) && (
+      {(obraFilters.size > 0 || funcionarioFilters.size > 0 || clienteFilters.size > 0) && (
         <Button variant="outline" size="sm" className="mb-4" onClick={clearFilters}>{t("Limpar filtros")}</Button>
       )}
 

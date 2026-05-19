@@ -185,7 +185,7 @@ CREATE TABLE IF NOT EXISTS produtos (
   id CHAR(36) NOT NULL,
   tenant_id CHAR(36) NOT NULL,
   nome VARCHAR(191) NOT NULL,
-  categoria ENUM('drywall','masticagem','fixacao','epi','outros') NOT NULL DEFAULT 'outros',
+  categoria VARCHAR(80) NOT NULL DEFAULT 'outros',
   unidade VARCHAR(30) NOT NULL DEFAULT 'un',
   valor_unitario DECIMAL(12,2) NOT NULL DEFAULT 0,
   fornecedor VARCHAR(191) NULL,
@@ -197,6 +197,19 @@ CREATE TABLE IF NOT EXISTS produtos (
   KEY idx_produtos_tenant_id (tenant_id),
   KEY idx_produtos_nome (nome),
   CONSTRAINT fk_produtos_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS produto_categorias (
+  id CHAR(36) NOT NULL,
+  tenant_id CHAR(36) NOT NULL,
+  slug VARCHAR(80) NOT NULL,
+  nome VARCHAR(80) NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_produto_categorias_tenant_slug (tenant_id, slug),
+  KEY idx_produto_categorias_tenant_id (tenant_id),
+  CONSTRAINT fk_produto_categorias_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS horas_trabalhadas (
@@ -288,6 +301,8 @@ CREATE TABLE IF NOT EXISTS pagamentos (
   data_pagamento DATE NULL,
   forma ENUM('dinheiro','pix','transferencia') NULL,
   observacoes TEXT NULL,
+  flg_envio_funcionario INT NOT NULL DEFAULT 0 COMMENT '1 = notificação enviada ao funcionário via WhatsApp',
+  flg_vld_funcionario INT NOT NULL DEFAULT 0 COMMENT '1 = funcionário respondeu 1 confirmando o recebimento',
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
@@ -296,6 +311,25 @@ CREATE TABLE IF NOT EXISTS pagamentos (
   KEY idx_pagamentos_periodo (periodo_inicio, periodo_fim),
   CONSTRAINT fk_pagamentos_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id),
   CONSTRAINT fk_pagamentos_func_tenant FOREIGN KEY (tenant_id, funcionario_id) REFERENCES funcionarios(tenant_id, id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS bot_mensagens_pendentes (
+  id              CHAR(36)     NOT NULL,
+  tenant_id       CHAR(36)     NOT NULL,
+  pagamento_id    CHAR(36)     NOT NULL,
+  funcionario_id  CHAR(36)     NOT NULL,
+  mensagem        TEXT         NOT NULL,
+  status          ENUM('pendente','enviado','erro') NOT NULL DEFAULT 'pendente',
+  tentativas      INT          NOT NULL DEFAULT 0,
+  ultimo_erro     TEXT         NULL,
+  created_at      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_bot_msg_status    (status),
+  KEY idx_bot_msg_tenant    (tenant_id),
+  KEY idx_bot_msg_pagamento (pagamento_id),
+  CONSTRAINT fk_bot_msg_tenant      FOREIGN KEY (tenant_id)      REFERENCES tenants(id)      ON DELETE CASCADE,
+  CONSTRAINT fk_bot_msg_funcionario FOREIGN KEY (funcionario_id) REFERENCES funcionarios(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS bot_jornada_sessoes (

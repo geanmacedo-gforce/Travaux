@@ -10,6 +10,7 @@ WorkingDirectory=/home/travaux/app/Travaux/Travaux/Bot
 Environment=NODE_ENV=production
 Environment=BOT_ENV_FILE=/home/travaux/.travaux/bot.env
 Environment=BOT_AUTH_DIR=/home/travaux/.travaux/bot/auth_info_baileys
+Environment=BOT_FORCE_NEW_QR=0
 ExecStart=/usr/bin/npm start
 Restart=always
 RestartSec=5

@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth-context";
 import { serverQuery } from "@/lib/server-api";
@@ -18,10 +18,19 @@ import { fmtBRL, fmtDate } from "@/lib/format";
 import { toast } from "sonner";
 import { Upload, Pencil } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
+import { MultiSelectFilter } from "@/components/MultiSelectFilter";
 
 export const Route = createFileRoute("/app/despesas")({ component: Page });
 
 const empty = { obra_id:"", categoria:"combustivel", produto_id:"", produto_quantidade:"1", produto_unidade:"", data: new Date().toISOString().slice(0,10), data_checkout:"", descricao:"", litros:"", qtd_pessoas:"", local:"", valor:0, responsavel_id:"" };
+const CATEGORY_OPTIONS = [
+  { value: "combustivel", labelKey: "Combustível" },
+  { value: "alimentacao", labelKey: "Alimentação" },
+  { value: "hospedagem", labelKey: "Hospedagem" },
+  { value: "produtos_insumos", labelKey: "Produtos & Insumos" },
+  { value: "nota_fiscal", labelKey: "Nota fiscal" },
+  { value: "outros", labelKey: "Outros" },
+];
 
 function formatLocalDate(date: Date) {
   const year = date.getFullYear();
@@ -86,34 +95,21 @@ function Page() {
   const tenantId = user?.tenant_id ?? "";
   const qc = useQueryClient();
   const today = new Date();
-  const [filterCat, setFilterCat] = useState("all");
+  const [filterCat, setFilterCat] = useState<Set<string>>(new Set());
   const [dataInicio, setDataInicio] = useState(formatLocalDate(new Date(today.getFullYear(), today.getMonth(), 1)));
   const [dataFim, setDataFim] = useState(formatLocalDate(today));
-  const [filterObra, setFilterObra] = useState("all");
-  const [filterResp, setFilterResp] = useState("all");
+  const [filterObra, setFilterObra] = useState<Set<string>>(new Set());
+  const [filterResp, setFilterResp] = useState<Set<string>>(new Set());
   const [open, setOpen] = useState(false);
   const [edit, setEdit] = useState<any | null>(null);
   const [form, setForm] = useState<any>(empty);
   const [file, setFile] = useState<File | null>(null);
 
   const { data: rows = [] } = useQuery({
-    queryKey: ["despesas-all", tenantId, filterCat, dataInicio, dataFim, filterObra, filterResp],
+    queryKey: ["despesas-all", tenantId, dataInicio, dataFim],
     queryFn: async () => {
       const where = ["d.tenant_id = ?", "d.data >= ?", "d.data <= ?"];
       const values: any[] = [tenantId, dataInicio, dataFim];
-
-      if (filterCat !== "all") {
-        where.push("d.categoria = ?");
-        values.push(filterCat);
-      }
-      if (filterObra !== "all") {
-        where.push("d.obra_id = ?");
-        values.push(filterObra);
-      }
-      if (filterResp !== "all") {
-        where.push("d.responsavel_id = ?");
-        values.push(filterResp);
-      }
 
       return (await serverQuery({
         sql: `SELECT d.*, o.nome AS obra_nome, f.nome AS responsavel_nome
@@ -127,6 +123,16 @@ function Page() {
     },
     enabled: Boolean(tenantId),
   });
+
+  const filteredRows = useMemo(() => {
+    return rows.filter((r: any) => {
+      const matchesObra = filterObra.size === 0 || filterObra.has(r.obra_id);
+      const matchesResp = filterResp.size === 0 || filterResp.has(r.responsavel_id);
+      const matchesCat = filterCat.size === 0 || filterCat.has(r.categoria);
+      return matchesObra && matchesResp && matchesCat;
+    });
+  }, [rows, filterObra, filterResp, filterCat]);
+
   const { data: obras = [] } = useQuery({
     queryKey: ["obras-list", tenantId],
     queryFn: async () => (await serverQuery({ sql: "SELECT id, nome FROM obras WHERE tenant_id = ? ORDER BY nome", values: [tenantId] })) ?? [],
@@ -142,6 +148,22 @@ function Page() {
     queryFn: async () => (await serverQuery({ sql: "SELECT id, nome, unidade, valor_unitario FROM produtos WHERE tenant_id = ? ORDER BY nome", values: [tenantId] })) ?? [],
     enabled: Boolean(tenantId),
   });
+
+  const obraOptions = useMemo(
+    () => obras.map((o: any) => ({ value: o.id, label: o.nome })),
+    [obras],
+  );
+
+  const responsavelOptions = useMemo(
+    () => funcs.map((f: any) => ({ value: f.id, label: f.nome })),
+    [funcs],
+  );
+
+  const categoriaOptions = useMemo(
+    () => CATEGORY_OPTIONS.map((option) => ({ value: option.value, label: t(option.labelKey) })),
+    [t],
+  );
+
   const produtoSelecionado = produtos.find((item:any) => item.id === form.produto_id);
   const produtoQuantidade = Number(form.produto_quantidade || 0);
   const produtoValorUnitario = Number(produtoSelecionado?.valor_unitario ?? 0);
@@ -281,9 +303,9 @@ function Page() {
     const now = new Date();
     setDataInicio(formatLocalDate(new Date(now.getFullYear(), now.getMonth(), 1)));
     setDataFim(formatLocalDate(now));
-    setFilterObra("all");
-    setFilterResp("all");
-    setFilterCat("all");
+    setFilterObra(new Set());
+    setFilterResp(new Set());
+    setFilterCat(new Set());
   };
 
 
@@ -299,41 +321,33 @@ function Page() {
           <Label>{t("Data fim")}</Label>
           <Input type="date" value={dataFim} onChange={(e)=>setDataFim(e.target.value)} />
         </div>
-        <div>
-          <Label>{t("Obra")}</Label>
-          <Select value={filterObra} onValueChange={setFilterObra}>
-            <SelectTrigger><SelectValue/></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">{t("Todas obras")}</SelectItem>
-              {obras.map((o:any)=><SelectItem key={o.id} value={o.id}>{o.nome}</SelectItem>)}
-            </SelectContent>
-          </Select>
-        </div>
-        <div>
-          <Label>{t("Responsável")}</Label>
-          <Select value={filterResp} onValueChange={setFilterResp}>
-            <SelectTrigger><SelectValue/></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">{t("Todos responsáveis")}</SelectItem>
-              {funcs.map((f:any)=><SelectItem key={f.id} value={f.id}>{f.nome}</SelectItem>)}
-            </SelectContent>
-          </Select>
-        </div>
-        <div>
-          <Label>{t("Categoria")}</Label>
-          <Select value={filterCat} onValueChange={setFilterCat}>
-            <SelectTrigger><SelectValue/></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">{t("Todas categorias")}</SelectItem>
-              <SelectItem value="combustivel">{t("Combustível")}</SelectItem>
-              <SelectItem value="alimentacao">{t("Alimentação")}</SelectItem>
-              <SelectItem value="hospedagem">{t("Hospedagem")}</SelectItem>
-              <SelectItem value="produtos_insumos">{t("Produtos & Insumos")}</SelectItem>
-              <SelectItem value="nota_fiscal">{t("Nota fiscal")}</SelectItem>
-              <SelectItem value="outros">{t("Outros")}</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
+        <MultiSelectFilter
+          title={t("Obra(s)")}
+          options={obraOptions}
+          selected={filterObra}
+          onChange={setFilterObra}
+          emptyText={t("Nenhuma obra")}
+          selectAllText={t("Selecionar todos")}
+          clearSelectionText={t("Limpar seleção")}
+        />
+        <MultiSelectFilter
+          title={t("Responsável(eis)")}
+          options={responsavelOptions}
+          selected={filterResp}
+          onChange={setFilterResp}
+          emptyText={t("Nenhum responsável")}
+          selectAllText={t("Selecionar todos")}
+          clearSelectionText={t("Limpar seleção")}
+        />
+        <MultiSelectFilter
+          title={t("Categoria(s)")}
+          options={categoriaOptions}
+          selected={filterCat}
+          onChange={setFilterCat}
+          emptyText={t("Nenhuma categoria")}
+          selectAllText={t("Selecionar todos")}
+          clearSelectionText={t("Limpar seleção")}
+        />
         <div className="flex items-end">
           <Button type="button" variant="outline" className="w-full" onClick={limparFiltros}>
             {t("Limpar filtros")}
@@ -344,7 +358,7 @@ function Page() {
         <Table>
           <TableHeader><TableRow><TableHead>{t("Data")}</TableHead><TableHead>{t("Categoria")}</TableHead><TableHead>{t("Obra")}</TableHead><TableHead>{t("Descrição")}</TableHead><TableHead>{t("Resp.")}</TableHead><TableHead>{t("Valor")}</TableHead><TableHead>{t("Comprovante")}</TableHead><TableHead></TableHead></TableRow></TableHeader>
           <TableBody>
-            {rows.map((r:any)=>(
+            {filteredRows.map((r:any)=>(
               <TableRow key={r.id}>
                 <TableCell>{fmtDate(r.data)}</TableCell>
                 <TableCell className="capitalize">{r.categoria === "produtos_insumos" ? t("Produtos & Insumos") : r.categoria === "nota_fiscal" ? t("Nota fiscal") : tEnum(r.categoria)}</TableCell>
@@ -368,7 +382,7 @@ function Page() {
                 </TableCell>
               </TableRow>
             ))}
-            {rows.length===0 && <TableRow><TableCell colSpan={8} className="text-center py-8 text-muted-foreground">{t("Nenhuma despesa.")}</TableCell></TableRow>}
+            {filteredRows.length===0 && <TableRow><TableCell colSpan={8} className="text-center py-8 text-muted-foreground">{t("Nenhuma despesa.")}</TableCell></TableRow>}
           </TableBody>
         </Table>
       </CardContent></Card>

@@ -61,16 +61,32 @@ export function FormDialog({
   );
 }
 
-export function ConfirmDelete({ onConfirm, label = "Excluir", iconOnly = true }: { onConfirm: () => void; label?: string; iconOnly?: boolean }) {
+export function ConfirmDelete({
+  onConfirm,
+  label = "Excluir",
+  iconOnly = true,
+  buttonClassName,
+  iconClassName,
+}: {
+  onConfirm: () => void;
+  label?: string;
+  iconOnly?: boolean;
+  buttonClassName?: string;
+  iconClassName?: string;
+}) {
   const { t } = useI18n();
+  const className = [
+    "text-red-600 hover:bg-red-50 hover:text-red-700 dark:text-red-400 dark:hover:bg-red-950/30 dark:hover:text-red-300",
+    buttonClassName ?? "",
+  ].join(" ").trim();
   return (
     <TooltipProvider>
       <Tooltip>
         <AlertDialog>
           <TooltipTrigger asChild>
             <AlertDialogTrigger asChild>
-              <Button size="sm" variant="ghost" className="text-red-600 hover:bg-red-50 hover:text-red-700 dark:text-red-400 dark:hover:bg-red-950/30 dark:hover:text-red-300" aria-label={t(label)}>
-                {iconOnly ? <Trash2 className="h-4 w-4" /> : t(label)}
+              <Button size="sm" variant="ghost" className={className} aria-label={t(label)}>
+                {iconOnly ? <Trash2 className={iconClassName ?? "h-4 w-4"} /> : t(label)}
               </Button>
             </AlertDialogTrigger>
           </TooltipTrigger>

@@ -17,6 +17,7 @@ import { fmtBRL, fmtDate } from "@/lib/format";
 import { toast } from "sonner";
 import { Pencil, Wallet, Building2, TrendingUp } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
+import { MultiSelectFilter } from "@/components/MultiSelectFilter";
 
 export const Route = createFileRoute("/app/pagamentos-recebidos")({ component: Page });
 
@@ -35,7 +36,7 @@ function Page() {
   const today = new Date();
   const [inicio, setInicio] = useState(formatLocalDate(new Date(today.getFullYear(), today.getMonth(), 1)));
   const [fim, setFim] = useState(formatLocalDate(new Date(today.getFullYear(), today.getMonth() + 1, 0)));
-  const [obraIdFilter, setObraIdFilter] = useState("all");
+  const [obraIdFilter, setObraIdFilter] = useState<Set<string>>(new Set());
   const [view, setView] = useState<"resumo" | "historico">("resumo");
   const [open, setOpen] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
@@ -94,7 +95,7 @@ function Page() {
     return recebimentos.filter((r: any) => {
       const data = String(r.data_recebimento ?? "").slice(0, 10);
       const emIntervalo = data >= inicio && data <= fim;
-      const passaObra = obraIdFilter === "all" || r.obra_id === obraIdFilter;
+      const passaObra = obraIdFilter.size === 0 || obraIdFilter.has(r.obra_id);
       return emIntervalo && passaObra;
     });
   }, [recebimentos, inicio, fim, obraIdFilter]);
@@ -109,7 +110,7 @@ function Page() {
 
   const linhas = useMemo(() => {
     return obras
-      .filter((o: any) => obraIdFilter === "all" || o.id === obraIdFilter)
+      .filter((o: any) => obraIdFilter.size === 0 || obraIdFilter.has(o.id))
       .map((o: any) => {
         const totalContratado = Number(o.valor_contratado ?? 0);
         const totalRecebido = totalRecebidoPorObra.get(o.id) ?? 0;
@@ -133,7 +134,7 @@ function Page() {
   const openNew = (obraId?: string, valorSugestao?: number) => {
     setEditId(null);
     setForm({
-      obra_id: obraId ?? (obraIdFilter !== "all" ? obraIdFilter : ""),
+      obra_id: obraId ?? (obraIdFilter.size === 1 ? Array.from(obraIdFilter)[0] : ""),
       valor: valorSugestao && valorSugestao > 0 ? Number(valorSugestao.toFixed(2)) : 0,
       data_recebimento: formatLocalDate(today),
       forma: "pix",
@@ -222,6 +223,11 @@ function Page() {
     qc.invalidateQueries({ queryKey: ["pag-rec"] });
   };
 
+  const obraOptions = useMemo(
+    () => obras.map((o: any) => ({ value: o.id, label: o.nome })),
+    [obras],
+  );
+
   return (
     <div>
       <PageHeader title="Pagamentos Recebidos" action={<Button onClick={() => openNew()}>{t("Novo recebimento")}</Button>} />
@@ -275,20 +281,15 @@ function Page() {
               <Label>{t("Data fim")}</Label>
               <Input type="date" value={fim} onChange={(e) => setFim(e.target.value)} />
             </div>
-            <div>
-              <Label>{t("Obra")}</Label>
-              <Select value={obraIdFilter} onValueChange={setObraIdFilter}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">{t("Todas as obras")}</SelectItem>
-                  {obras.map((o: any) => (
-                    <SelectItem key={o.id} value={o.id}>{o.nome}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            <MultiSelectFilter
+              title={t("Obra(s)")}
+              options={obraOptions}
+              selected={obraIdFilter}
+              onChange={setObraIdFilter}
+              emptyText={t("Nenhuma obra")}
+              selectAllText={t("Selecionar todos")}
+              clearSelectionText={t("Limpar seleção")}
+            />
             <div className="flex items-center gap-2">
               <Button variant={view === "resumo" ? "default" : "outline"} onClick={() => setView("resumo")}>{t("Resumo")}</Button>
               <Button variant={view === "historico" ? "default" : "outline"} onClick={() => setView("historico")}>{t("Histórico")}</Button>

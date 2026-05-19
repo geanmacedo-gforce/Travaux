@@ -15,7 +15,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { PageHeader, FormDialog, ConfirmDelete } from "@/components/crud";
 import { fmtBRL, fmtDate, fmtHours } from "@/lib/format";
 import { toast } from "sonner";
-import { Pencil, Clock, Wallet, Building2, ChevronDown, Check } from "lucide-react";
+import { Pencil, Clock, Wallet, Building2, ChevronDown, Check, MessageSquare, CheckCheck, XCircle, RotateCcw, Users } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { useI18n } from "@/lib/i18n";
@@ -29,6 +29,36 @@ function formatLocalDate(date: Date) {
   return `${year}-${month}-${day}`;
 }
 
+const MESES_PT = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
+
+function periodoLabel(yyyymm: string): string {
+  const y = parseInt(yyyymm.slice(0, 4));
+  const m = parseInt(yyyymm.slice(4, 6)) - 1;
+  return `${MESES_PT[m]} ${y}`;
+}
+
+function periodoFromDate(dateStr: string): string {
+  const raw = String(dateStr ?? "").trim();
+  if (!raw) return "";
+
+  // Avoid timezone shifts for values like "YYYY-MM-DD" by extracting directly.
+  const yyyyMmDashed = raw.match(/^(\d{4})-(\d{2})/);
+  if (yyyyMmDashed) return `${yyyyMmDashed[1]}${yyyyMmDashed[2]}`;
+
+  const yyyyMmCompact = raw.match(/^(\d{4})(\d{2})$/);
+  if (yyyyMmCompact) return `${yyyyMmCompact[1]}${yyyyMmCompact[2]}`;
+
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return "";
+  return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function toNonNegativeMoney(value: any): number {
+  const n = Number(value ?? 0);
+  if (!Number.isFinite(n)) return 0;
+  return Math.abs(n);
+}
+
 function isValePagamento(pagamento: any) {
   const obs = String(pagamento?.observacoes ?? "").toUpperCase();
   return obs.includes("[VALE]");
@@ -36,6 +66,11 @@ function isValePagamento(pagamento: any) {
 
 function getTipoPagamento(pagamento: any) {
   return isValePagamento(pagamento) ? "vale" : "pagamento";
+}
+
+function buildMensagemConfirmacaoRecebimento(titulo: string, detalhes: string[]) {
+  const body = detalhes.filter(Boolean).join("\n");
+  return `${titulo}\n\n${body}\n\nVocê aprova esse recebimento?\n\n1 - SIM\n2 - NÃO`;
 }
 
 function normalizeDate(value: any) {
@@ -73,7 +108,7 @@ function Page() {
   const [valeOpen, setValeOpen] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [payForm, setPayForm] = useState<any>({ funcionario_id: "", valor: 0, data_pagamento: formatLocalDate(today), forma: "pix", periodo_inicio: inicio, periodo_fim: fim, status: "pago" });
-  const [valeForm, setValeForm] = useState<any>({ funcionario_id: "", valor: 0, data_pagamento: formatLocalDate(today) });
+  const [valeForm, setValeForm] = useState<any>({ funcionario_id: "", valor: 0, data_pagamento: formatLocalDate(today), periodo_inicio: "", periodo_fim: "" });
   const funcFilterRef = useRef<HTMLDivElement | null>(null);
   const obraFilterRef = useRef<HTMLDivElement | null>(null);
 
@@ -111,17 +146,60 @@ function Page() {
     })) ?? [],
     enabled: Boolean(tenantId),
   });
-  const { data: horas = [] } = useQuery({
-    queryKey: ["horas-folha", inicio, fim, tenantId],
-    queryFn: async () => (await serverQuery({
-      sql: `SELECT h.*, f.nome AS funcionario_nome, o.nome AS obra_nome
+  const { data: folhaData = [], error: folhaError } = useQuery({
+    queryKey: ["folha", inicio, fim, tenantId],
+    queryFn: async () => {
+      const result = await serverQuery({
+        sql: `SELECT
+              f.id AS funcionario_id,
+              f.nome AS funcionario_nome,
+              DATE_FORMAT(h.entrada, '%Y%m') AS period,
+              COUNT(DISTINCT h.obra_id) AS obras_distintas,
+              ROUND(SUM(h.horas), 4) AS total_horas,
+              ROUND(SUM(h.horas) * CASE f.tipo_remuneracao
+                WHEN 'diaria' THEN f.valor / 8
+                WHEN 'mensal' THEN f.valor / 220
+                ELSE f.valor
+              END, 2) AS total_bruto,
+              COALESCE(MAX(pag.total_vales), 0) AS total_vales,
+              COALESCE(MAX(pag.total_pagamentos), 0) AS total_pagamentos,
+              LEAST(
+                ROUND(SUM(h.horas) * CASE f.tipo_remuneracao
+                  WHEN 'diaria' THEN f.valor / 8
+                  WHEN 'mensal' THEN f.valor / 220
+                  ELSE f.valor
+                END, 2),
+                ROUND(
+                  ROUND(SUM(h.horas) * CASE f.tipo_remuneracao
+                    WHEN 'diaria' THEN f.valor / 8
+                    WHEN 'mensal' THEN f.valor / 220
+                    ELSE f.valor
+                  END, 2)
+                  - COALESCE(MAX(pag.total_vales), 0)
+                  - COALESCE(MAX(pag.total_pagamentos), 0)
+                , 2)
+              ) AS saldo
             FROM horas_trabalhadas h
             LEFT JOIN funcionarios f ON f.id = h.funcionario_id AND f.tenant_id = h.tenant_id
-            LEFT JOIN obras o ON o.id = h.obra_id AND o.tenant_id = h.tenant_id
+            LEFT JOIN (
+              SELECT
+                funcionario_id,
+                DATE_FORMAT(COALESCE(periodo_inicio, data_pagamento), '%Y%m') AS period,
+                ROUND(SUM(ABS(valor)), 2) AS total_vales,
+                0 AS total_pagamentos
+              FROM pagamentos
+              WHERE tenant_id = ? AND status = 'pago'
+              GROUP BY funcionario_id, DATE_FORMAT(COALESCE(periodo_inicio, data_pagamento), '%Y%m')
+            ) pag ON pag.funcionario_id = h.funcionario_id AND pag.period = DATE_FORMAT(h.entrada, '%Y%m')
             WHERE h.tenant_id = ? AND DATE(h.entrada) >= ? AND DATE(h.entrada) <= ?
-            ORDER BY h.entrada DESC`,
-      values: [tenantId, inicio, fim],
-    })) ?? [],
+            GROUP BY f.id, f.nome, f.valor, f.tipo_remuneracao, DATE_FORMAT(h.entrada, '%Y%m')
+            HAVING SUM(h.horas) > 0
+            ORDER BY f.nome, period`,
+        values: [tenantId, tenantId, inicio, fim],
+      });
+      if (!result) return [];
+      return result;
+    },
     enabled: Boolean(tenantId),
   });
   const { data: pagamentos = [] } = useQuery({
@@ -137,21 +215,6 @@ function Page() {
     enabled: Boolean(tenantId),
   });
 
-  const horasFiltradas = useMemo(() => {
-    return horas.filter((h: any) => {
-      const passaFuncionario = funcFilters.size === 0 || funcFilters.has(h.funcionario_id);
-      const passaObra = obraFilters.size === 0 || obraFilters.has(h.obra_id);
-      return passaFuncionario && passaObra;
-    });
-  }, [horas, funcFilters, obraFilters]);
-
-  const getValorHoraFuncionario = (funcionario: any) => {
-    const valorBase = Number(funcionario?.valor ?? 0);
-    if (funcionario?.tipo_remuneracao === "diaria") return valorBase / 8;
-    if (funcionario?.tipo_remuneracao === "mensal") return valorBase / 220;
-    return valorBase;
-  };
-
   const pagamentosHistoricoFiltrados = useMemo(() => {
     return pagamentos.filter((p: any) => {
       const dataPagamento = normalizeDate(p.data_pagamento);
@@ -161,18 +224,6 @@ function Page() {
       const emIntervalo = isDateBetween(dataRef, inicio, fim);
       const passaFuncionario = funcFilters.size === 0 || funcFilters.has(p.funcionario_id);
       return emIntervalo && passaFuncionario;
-    });
-  }, [pagamentos, inicio, fim, funcFilters]);
-
-  const pagamentosPeriodo = useMemo(() => {
-    return pagamentos.filter((p: any) => {
-      const dataPagamento = normalizeDate(p.data_pagamento);
-      const periodoInicio = normalizeDate(p.periodo_inicio);
-      const periodoFim = normalizeDate(p.periodo_fim) || periodoInicio;
-      const emIntervaloPorData = isDateBetween(dataPagamento, inicio, fim);
-      const emIntervaloPorPeriodo = overlapsRange(periodoInicio, periodoFim, inicio, fim);
-      const passaFuncionario = funcFilters.size === 0 || funcFilters.has(p.funcionario_id);
-      return (emIntervaloPorData || emIntervaloPorPeriodo) && passaFuncionario;
     });
   }, [pagamentos, inicio, fim, funcFilters]);
 
@@ -206,34 +257,21 @@ function Page() {
     return sorted;
   }, [pagamentosHistoricoFiltrados, histSortField, histSortDirection]);
 
-  const resumoPagamentosPorFuncionario = useMemo(() => {
-    const vales = new Map<string, number>();
-    const pagamentos = new Map<string, number>();
-
-    pagamentosPeriodo
-      .filter((p: any) => p.status === "pago")
-      .forEach((p: any) => {
-        const valor = Number(p.valor || 0);
-        if (isValePagamento(p)) {
-          vales.set(p.funcionario_id, (vales.get(p.funcionario_id) ?? 0) + valor);
-        } else {
-          pagamentos.set(p.funcionario_id, (pagamentos.get(p.funcionario_id) ?? 0) + valor);
-        }
-      });
-
-    return { vales, pagamentos };
-  }, [pagamentosPeriodo]);
-
-  const linhas = funcs.map((f:any) => {
-    const hs = horasFiltradas.filter((h:any)=>h.funcionario_id===f.id);
-    const valorHora = getValorHoraFuncionario(f);
-    const totalH = hs.reduce((s:number,h:any)=>s+Number(h.horas),0);
-    const totalBruto = totalH * valorHora;
-    const totalVale = resumoPagamentosPorFuncionario.vales.get(f.id) ?? 0;
-    const totalPagamentos = resumoPagamentosPorFuncionario.pagamentos.get(f.id) ?? 0;
-    const saldo = totalBruto - totalVale - totalPagamentos;
-    return { funcionario: f, totalH, totalBruto, totalVale, totalPagamentos, saldo };
-  }).filter((l) => l.totalH > 0 && Number(l.saldo.toFixed(2)) !== 0);
+  // Linhas da folha: calculadas no banco, filtradas aqui por funcionário
+  const linhas = useMemo(() => {
+    return folhaData
+      .filter((row: any) => funcFilters.size === 0 || funcFilters.has(row.funcionario_id))
+      .map((row: any) => ({
+        funcionario: funcs.find((f: any) => f.id === row.funcionario_id) ?? { id: row.funcionario_id, nome: row.funcionario_nome },
+        period: row.period,
+        totalH: Number(row.total_horas),
+        totalBruto: Number(row.total_bruto),
+        totalVale: Number(row.total_vales),
+        totalPagamentos: Number(row.total_pagamentos),
+        saldo: Number(row.saldo),
+        obrasDist: Number(row.obras_distintas ?? 0),
+      }));
+  }, [folhaData, funcFilters, funcs]);
 
   const linhasOrdenadas = useMemo(() => {
     const sorted = [...linhas];
@@ -244,6 +282,9 @@ function Page() {
       if (folhaSortField === "funcionario_nome") {
         av = String(a.funcionario?.nome ?? "").toLowerCase();
         bv = String(b.funcionario?.nome ?? "").toLowerCase();
+      } else if (folhaSortField === "period") {
+        av = a.period ?? "";
+        bv = b.period ?? "";
       } else {
         av = Number(a[folhaSortField] ?? 0);
         bv = Number(b[folhaSortField] ?? 0);
@@ -285,11 +326,11 @@ function Page() {
   };
 
   const totalizadores = useMemo(() => {
-    const totalHoras = linhas.reduce((s:number,l:any)=>s+Number(l.totalH),0);
-    const totalReceber = linhas.reduce((s:number,l:any)=>s+Number(l.saldo),0);
-    const obrasDiferentes = new Set(horasFiltradas.map((h:any)=>h.obra_id)).size;
-    return { totalHoras, totalReceber, obrasDiferentes };
-  }, [horasFiltradas, linhas]);
+    const totalHoras = linhas.reduce((s: number, l: any) => s + Number(l.totalH), 0);
+    const totalReceber = linhas.reduce((s: number, l: any) => s + Number(l.saldo), 0);
+    const funcionariosDiferentes = new Set(linhas.map((l: any) => l.funcionario.id)).size;
+    return { totalHoras, totalReceber, funcionariosDiferentes };
+  }, [linhas]);
 
   const toggleFuncFilter = (funcId: string) => {
     const next = new Set(funcFilters);
@@ -325,13 +366,17 @@ function Page() {
 
   const openPay = (l: any) => {
     setEditId(null);
-    setPayForm({ funcionario_id: l.funcionario.id, valor: l.saldo, data_pagamento: formatLocalDate(today), forma: "pix", periodo_inicio: inicio, periodo_fim: fim, status: "pago" });
+    const py = parseInt(l.period.slice(0, 4));
+    const pm = parseInt(l.period.slice(4, 6)) - 1;
+    const pInicio = formatLocalDate(new Date(py, pm, 1));
+    const pFim = formatLocalDate(new Date(py, pm + 1, 0));
+    setPayForm({ funcionario_id: l.funcionario.id, valor: l.saldo, data_pagamento: formatLocalDate(today), forma: "pix", periodo_inicio: pInicio, periodo_fim: pFim, status: "pago" });
     setPayOpen(true);
   };
   const openEdit = (p: any) => {
     setEditId(p.id);
     setPayForm({
-      funcionario_id: p.funcionario_id, valor: p.valor,
+      funcionario_id: p.funcionario_id, valor: toNonNegativeMoney(p.valor),
       data_pagamento: normalizeDate(p.data_pagamento) || formatLocalDate(today),
       forma: p.forma ?? "pix",
       periodo_inicio: normalizeDate(p.periodo_inicio), periodo_fim: normalizeDate(p.periodo_fim),
@@ -341,10 +386,13 @@ function Page() {
   };
   const savePay = async () => {
     if (!tenantId) return toast.error(t("Tenant nao identificado na sessao."));
+    const valorPay = Number(payForm.valor ?? 0);
+    if (!Number.isFinite(valorPay)) return toast.error(t("Informe um valor válido."));
+    if (valorPay < 0) return toast.error(t("Pagamento não pode ter valor negativo."));
     const payload = {
       funcionario_id: payForm.funcionario_id,
       periodo_inicio: payForm.periodo_inicio, periodo_fim: payForm.periodo_fim,
-      valor: Number(payForm.valor), status: payForm.status,
+      valor: toNonNegativeMoney(payForm.valor), status: payForm.status,
       data_pagamento: payForm.data_pagamento, forma: payForm.forma,
     };
     try {
@@ -367,11 +415,12 @@ function Page() {
           ],
         });
       } else {
+        const newId = crypto.randomUUID();
         await serverQuery({
           sql: `INSERT INTO pagamentos (id, tenant_id, funcionario_id, periodo_inicio, periodo_fim, valor, status, data_pagamento, forma, observacoes)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           values: [
-            crypto.randomUUID(),
+            newId,
             tenantId,
             payload.funcionario_id,
             payload.periodo_inicio,
@@ -383,6 +432,29 @@ function Page() {
             null,
           ],
         });
+        // Enfileirar notificação WhatsApp para o funcionário
+        const func = funcs.find((f: any) => f.id === payload.funcionario_id);
+        if (func?.telefone) {
+          const periodo = `${fmtDate(payload.periodo_inicio)} → ${fmtDate(payload.periodo_fim)}`;
+          const formaLabel: Record<string, string> = { dinheiro: "Dinheiro", pix: "Pix", transferencia: "Transferência" };
+          const mensagem = buildMensagemConfirmacaoRecebimento(
+            "💰 *Pagamento registrado!*",
+            [
+              `Olá ${func.nome},`,
+              "um pagamento foi registrado para você:",
+              `📅 Período: ${periodo}`,
+              `💵 Valor: ${fmtBRL(payload.valor)}`,
+              `💳 Forma: ${formaLabel[payload.forma] ?? payload.forma}`,
+              `📆 Data: ${fmtDate(payload.data_pagamento)}`,
+            ]
+          );
+          try {
+            await serverQuery({
+              sql: "INSERT INTO bot_mensagens_pendentes (id, tenant_id, pagamento_id, funcionario_id, mensagem) VALUES (?, ?, ?, ?, ?)",
+              values: [crypto.randomUUID(), tenantId, newId, payload.funcionario_id, mensagem],
+            });
+          } catch { /* notificação não crítica */ }
+        }
       }
     } catch (error) {
       return toast.error((error as Error).message);
@@ -390,6 +462,7 @@ function Page() {
     toast.success(editId ? t("Pagamento atualizado") : t("Pagamento registrado"));
     setPayOpen(false); setEditId(null);
     qc.invalidateQueries({ queryKey: ["pagamentos"] });
+    qc.invalidateQueries({ queryKey: ["folha"] });
   };
   const delPay = async (id: string) => {
     if (!tenantId) return toast.error(t("Tenant nao identificado na sessao."));
@@ -403,13 +476,20 @@ function Page() {
     }
     toast.success(t("Pagamento excluído"));
     qc.invalidateQueries({ queryKey: ["pagamentos"] });
+    qc.invalidateQueries({ queryKey: ["folha"] });
   };
 
   const openVale = (l: any) => {
+    const py = parseInt(l.period.slice(0, 4));
+    const pm = parseInt(l.period.slice(4, 6)) - 1;
+    const pInicio = formatLocalDate(new Date(py, pm, 1));
+    const pFim = formatLocalDate(new Date(py, pm + 1, 0));
     setValeForm({
       funcionario_id: l.funcionario.id,
       valor: 0,
       data_pagamento: formatLocalDate(today),
+      periodo_inicio: pInicio,
+      periodo_fim: pFim,
     });
     setValeOpen(true);
   };
@@ -417,25 +497,48 @@ function Page() {
   const saveVale = async () => {
     if (!tenantId) return toast.error(t("Tenant nao identificado na sessao."));
     if (!valeForm.funcionario_id) return toast.error(t("Selecione um funcionário."));
-    if (!Number(valeForm.valor) || Number(valeForm.valor) <= 0) return toast.error(t("Informe um valor de vale válido."));
+    if (!valeForm.periodo_inicio || !valeForm.periodo_fim) return toast.error(t("Período do vale é obrigatório."));
+    const valorVale = Number(valeForm.valor ?? 0);
+    if (!Number.isFinite(valorVale)) return toast.error(t("Informe um valor de vale válido."));
+    if (valorVale < 0) return toast.error(t("Vale não pode ter valor negativo."));
 
     try {
+      const newId = crypto.randomUUID();
       await serverQuery({
         sql: `INSERT INTO pagamentos (id, tenant_id, funcionario_id, periodo_inicio, periodo_fim, valor, status, data_pagamento, forma, observacoes)
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         values: [
-          crypto.randomUUID(),
+          newId,
           tenantId,
           valeForm.funcionario_id,
-          inicio,
-          fim,
-          Number(valeForm.valor),
+          valeForm.periodo_inicio,
+          valeForm.periodo_fim,
+          toNonNegativeMoney(valeForm.valor),
           "pago",
           valeForm.data_pagamento,
           "dinheiro",
           "[VALE] Adiantamento",
         ],
       });
+      // Enfileirar notificação WhatsApp para o funcionário
+      const func = funcs.find((f: any) => f.id === valeForm.funcionario_id);
+      if (func?.telefone) {
+        const mensagem = buildMensagemConfirmacaoRecebimento(
+          "💵 *Vale registrado!*",
+          [
+            `Olá ${func.nome},`,
+            "um adiantamento foi registrado para você:",
+            `💵 Valor: ${fmtBRL(toNonNegativeMoney(valeForm.valor))}`,
+            `📆 Data: ${fmtDate(valeForm.data_pagamento)}`,
+          ]
+        );
+        try {
+          await serverQuery({
+            sql: "INSERT INTO bot_mensagens_pendentes (id, tenant_id, pagamento_id, funcionario_id, mensagem) VALUES (?, ?, ?, ?, ?)",
+            values: [crypto.randomUUID(), tenantId, newId, valeForm.funcionario_id, mensagem],
+          });
+        } catch { /* notificação não crítica */ }
+      }
     } catch (error) {
       return toast.error((error as Error).message);
     }
@@ -443,6 +546,52 @@ function Page() {
     toast.success(t("Vale registrado"));
     setValeOpen(false);
     qc.invalidateQueries({ queryKey: ["pagamentos"] });
+    qc.invalidateQueries({ queryKey: ["folha"] });
+  };
+
+  const reenviarNotificacao = async (p: any) => {
+    if (!tenantId) return toast.error(t("Tenant nao identificado na sessao."));
+    if (!p?.id || !p?.funcionario_id) return toast.error(t("Pagamento inválido para reenviar."));
+
+    const detalhes = isValePagamento(p)
+      ? [
+          `💵 Valor: ${fmtBRL(toNonNegativeMoney(p.valor))}`,
+          `📆 Data: ${fmtDate(p.data_pagamento)}`,
+        ]
+      : [
+          `📅 Período: ${fmtDate(p.periodo_inicio)} → ${fmtDate(p.periodo_fim)}`,
+          `💵 Valor: ${fmtBRL(toNonNegativeMoney(p.valor))}`,
+          `💳 Forma: ${String(p.forma ?? "").toLowerCase() === "dinheiro" ? "Dinheiro" : String(p.forma ?? "")}`,
+          `📆 Data: ${fmtDate(p.data_pagamento)}`,
+        ];
+
+    const mensagem = buildMensagemConfirmacaoRecebimento(
+      isValePagamento(p) ? "💵 *Vale registrado!*" : "💰 *Pagamento registrado!*",
+      [
+        `Olá ${p.funcionario_nome ?? ""},`,
+        ...(isValePagamento(p)
+          ? ["um adiantamento foi registrado para você:"]
+          : ["um pagamento foi registrado para você:"]),
+        ...detalhes,
+      ]
+    );
+
+    try {
+      await serverQuery({
+        sql: "INSERT INTO bot_mensagens_pendentes (id, tenant_id, pagamento_id, funcionario_id, mensagem) VALUES (?, ?, ?, ?, ?)",
+        values: [crypto.randomUUID(), tenantId, p.id, p.funcionario_id, mensagem],
+      });
+      await serverQuery({
+        sql: "UPDATE pagamentos SET flg_envio_funcionario = 0, flg_vld_funcionario = 0 WHERE id = ? AND tenant_id = ?",
+        values: [p.id, tenantId],
+      });
+    } catch (error) {
+      return toast.error((error as Error).message);
+    }
+
+    toast.success(t("Notificação reenviada"));
+    qc.invalidateQueries({ queryKey: ["pagamentos"] });
+    qc.invalidateQueries({ queryKey: ["folha"] });
   };
 
   return (
@@ -474,12 +623,12 @@ function Page() {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <Building2 className="h-4 w-4" />
-              {t("Obras Diferentes")}
+              <Users className="h-4 w-4" />
+              {t("Funcionários")}
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{totalizadores.obrasDiferentes}</div>
+            <div className="text-2xl font-bold">{totalizadores.funcionariosDiferentes}</div>
           </CardContent>
         </Card>
       </div>
@@ -561,11 +710,17 @@ function Page() {
 
           {view === "folha" ? (
             <div className="overflow-x-auto">
+              {folhaError && (
+                <div className="mb-2 rounded border border-red-400 bg-red-50 p-2 text-sm text-red-700">
+                  Erro ao carregar folha: {String((folhaError as any)?.message ?? folhaError)}
+                </div>
+              )}
               <Table>
-                <TableHeader><TableRow><TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleFolhaSort("funcionario_nome")}>{t("Funcionário")} {folhaSortIndicator("funcionario_nome")}</Button></TableHead><TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleFolhaSort("totalH")}>{t("Horas")} {folhaSortIndicator("totalH")}</Button></TableHead><TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleFolhaSort("totalBruto")}>{t("Valor Total")} {folhaSortIndicator("totalBruto")}</Button></TableHead><TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleFolhaSort("totalVale")}>{t("Valor Vales")}{folhaSortIndicator("totalVale")}</Button></TableHead><TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleFolhaSort("saldo")}>{t("Saldo")} {folhaSortIndicator("saldo")}</Button></TableHead><TableHead className="text-right"></TableHead></TableRow></TableHeader>
+                <TableHeader><TableRow><TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleFolhaSort("period")}>{t("Período")} {folhaSortIndicator("period")}</Button></TableHead><TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleFolhaSort("funcionario_nome")}>{t("Funcionário")} {folhaSortIndicator("funcionario_nome")}</Button></TableHead><TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleFolhaSort("totalH")}>{t("Horas")} {folhaSortIndicator("totalH")}</Button></TableHead><TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleFolhaSort("totalBruto")}>{t("Valor Total")} {folhaSortIndicator("totalBruto")}</Button></TableHead><TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleFolhaSort("totalVale")}>{t("Valor Vales")}{folhaSortIndicator("totalVale")}</Button></TableHead><TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleFolhaSort("saldo")}>{t("Saldo")} {folhaSortIndicator("saldo")}</Button></TableHead><TableHead className="text-right"></TableHead></TableRow></TableHeader>
                 <TableBody>
                   {linhasOrdenadas.map((l) => (
-                    <TableRow key={l.funcionario.id}>
+                    <TableRow key={`${l.funcionario.id}-${l.period}`}>
+                      <TableCell className="text-sm text-muted-foreground">{periodoLabel(l.period)}</TableCell>
                       <TableCell className="font-medium">{l.funcionario.nome}</TableCell>
                       <TableCell>{fmtHours(l.totalH)}</TableCell>
                       <TableCell>{fmtBRL(l.totalBruto)}</TableCell>
@@ -597,25 +752,72 @@ function Page() {
                       </TableCell>
                     </TableRow>
                   ))}
-                  {linhasOrdenadas.length===0 && <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">{t("Sem horas no período.")}</TableCell></TableRow>}
+                  {linhasOrdenadas.length===0 && <TableRow><TableCell colSpan={7} className="text-center py-8 text-muted-foreground">{t("Sem horas no período.")}</TableCell></TableRow>}
                 </TableBody>
               </Table>
             </div>
           ) : (
             <div className="overflow-x-auto">
               <Table>
-                <TableHeader><TableRow><TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleHistSort("data_pagamento")}>{t("Data")} {histSortIndicator("data_pagamento")}</Button></TableHead><TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleHistSort("funcionario_nome")}>{t("Funcionário")} {histSortIndicator("funcionario_nome")}</Button></TableHead><TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleHistSort("periodo_inicio")}>{t("Período")} {histSortIndicator("periodo_inicio")}</Button></TableHead><TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleHistSort("valor")}>{t("Valor")} {histSortIndicator("valor")}</Button></TableHead><TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleHistSort("tipo")}>{t("Tipo")} {histSortIndicator("tipo")}</Button></TableHead><TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleHistSort("forma")}>{t("Forma")} {histSortIndicator("forma")}</Button></TableHead><TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleHistSort("status")}>{t("Status")} {histSortIndicator("status")}</Button></TableHead><TableHead className="text-right"></TableHead></TableRow></TableHeader>
+                <TableHeader><TableRow><TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleHistSort("data_pagamento")}>{t("Data pgto")} {histSortIndicator("data_pagamento")}</Button></TableHead><TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleHistSort("funcionario_nome")}>{t("Funcionário")} {histSortIndicator("funcionario_nome")}</Button></TableHead><TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleHistSort("periodo_inicio")}>{t("Período")} {histSortIndicator("periodo_inicio")}</Button></TableHead><TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleHistSort("valor")}>{t("Valor")} {histSortIndicator("valor")}</Button></TableHead><TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleHistSort("tipo")}>{t("Tipo")} {histSortIndicator("tipo")}</Button></TableHead><TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleHistSort("forma")}>{t("Forma")} {histSortIndicator("forma")}</Button></TableHead><TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleHistSort("status")}>{t("Status")} {histSortIndicator("status")}</Button></TableHead><TableHead><Button variant="ghost" size="sm" className="h-auto p-0 pointer-events-none hover:bg-transparent">{t("Notificação")}</Button></TableHead><TableHead className="text-right"></TableHead></TableRow></TableHeader>
                 <TableBody>
                   {pagamentosOrdenados.map((p:any)=>(
                     <TableRow key={p.id}>
                       <TableCell>{fmtDate(p.data_pagamento)}</TableCell>
                       <TableCell>{p.funcionario_nome}</TableCell>
-                      <TableCell>{fmtDate(p.periodo_inicio)} → {fmtDate(p.periodo_fim)}</TableCell>
-                      <TableCell>{fmtBRL(p.valor)}</TableCell>
+                      <TableCell>{periodoLabel(periodoFromDate(p.periodo_inicio))}</TableCell>
+                      <TableCell>{fmtBRL(toNonNegativeMoney(p.valor))}</TableCell>
                       <TableCell className="capitalize">{tEnum(getTipoPagamento(p))}</TableCell>
                       <TableCell className="capitalize">{tEnum(p.forma)}</TableCell>
                       <TableCell><Badge className={p.status==="pago"?"bg-success/20 text-success":"bg-warning/20"}>{tEnum(p.status)}</Badge></TableCell>
+                      <TableCell>
+                        <TooltipProvider>
+                          <div className="flex items-center gap-1">
+                            {Number(p.flg_vld_funcionario) === 1 ? (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <CheckCheck className="h-4 w-4 text-green-600" />
+                                </TooltipTrigger>
+                                <TooltipContent>Confirmado pelo funcionário</TooltipContent>
+                              </Tooltip>
+                            ) : Number(p.flg_vld_funcionario) === 2 ? (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <XCircle className="h-4 w-4 text-red-600" />
+                                </TooltipTrigger>
+                                <TooltipContent>Desaprovado pelo funcionário</TooltipContent>
+                              </Tooltip>
+                            ) : p.flg_envio_funcionario ? (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <MessageSquare className="h-4 w-4 text-blue-500" />
+                                </TooltipTrigger>
+                                <TooltipContent>Notificação enviada — aguardando confirmação</TooltipContent>
+                              </Tooltip>
+                            ) : (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <MessageSquare className="h-4 w-4 text-muted-foreground/40" />
+                                </TooltipTrigger>
+                                <TooltipContent>Notificação não enviada</TooltipContent>
+                              </Tooltip>
+                            )}
+                          </div>
+                        </TooltipProvider>
+                      </TableCell>
                       <TableCell className="text-right inline-flex items-center gap-1 justify-end w-full">
+                        {Number(p.flg_vld_funcionario) === 2 && (
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button size="sm" variant="ghost" onClick={()=>reenviarNotificacao(p)} aria-label={t("Reenviar notificação")}>
+                                  <RotateCcw className="h-4 w-4 text-red-600" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>{t("Reenviar para o funcionário")}</TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                        )}
                         <TooltipProvider>
                           <Tooltip>
                             <TooltipTrigger asChild>

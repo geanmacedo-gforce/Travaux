@@ -11,7 +11,7 @@ const os = require('os');
 
 const homeDir = process.env.HOME || process.env.USERPROFILE || os.homedir();
 
-function loadEnvFile(filePath) {
+function loadEnvFile(filePath, override = false) {
   if (!filePath) {
     if (process.env.NODE_ENV === 'production') {
       throw new Error('BOT_ENV_FILE is required in production.');
@@ -27,17 +27,15 @@ function loadEnvFile(filePath) {
     return;
   }
 
-  dotenv.config({ path: resolvedPath, override: false });
+  dotenv.config({ path: resolvedPath, override });
 }
 
 loadEnvFile(process.env.BOT_ENV_FILE && process.env.BOT_ENV_FILE.trim());
 if (!process.env.BOT_ENV_FILE) {
   loadEnvFile(path.join(homeDir, '.travaux', 'bot.env'));
 }
-// Suporte a .env.local em desenvolvimento
-if (process.env.NODE_ENV !== 'production') {
-  loadEnvFile(path.join(__dirname, '.env.local'));
-}
+// .env.local tem prioridade quando existir, inclusive em testes locais.
+loadEnvFile(path.join(__dirname, '.env.local'), true);
 
 // Opções de almoço/pausa disponíveis (em minutos)
 const ALMOCO_OPTIONS = [
@@ -54,6 +52,7 @@ let pool = null;
 let suporteLocalizacaoCache = null;
 let botPermiteCheckinForaRaioColumnExistsCache = null;
 let tenantTimezoneCodeColumnExistsCache = null;
+let botMensagensWhatsappMessageIdColumnExistsCache = null;
 let lidMappingCache = null;
 
 function normalizePhone(value) {
@@ -173,6 +172,11 @@ function getAuthDir() {
   return configuredAuthDir ? path.resolve(configuredAuthDir) : path.join(homeDir, '.travaux', 'bot', 'auth_info_baileys');
 }
 
+function shouldForceNewQrOnStart() {
+  const value = String(process.env.BOT_FORCE_NEW_QR || '').trim().toLowerCase();
+  return ['1', 'true', 'yes', 'on'].includes(value);
+}
+
 function resolveSenderIdentifier(rawValue) {
   const raw = String(rawValue || '');
   const digits = normalizePhone(raw.split('@')[0]);
@@ -189,15 +193,42 @@ function resolveSenderIdentifier(rawValue) {
 }
 
 function getSenderPhone(msg) {
-  return resolveSenderIdentifier(msg.key.participant || msg.participant || msg.key.remoteJid);
+  const remoteJid = String(msg?.key?.remoteJid || '');
+  const remoteJidAlt = String(msg?.key?.remoteJidAlt || msg?.remoteJidAlt || '');
+  const participantRaw = msg?.key?.participant || msg?.participant;
+  const participantAltRaw = msg?.key?.participantAlt || msg?.participantAlt;
+  const remoteDigits = resolveSenderIdentifier(remoteJid);
+  const remoteAltDigits = resolveSenderIdentifier(remoteJidAlt);
+  const participantDigits = resolveSenderIdentifier(participantRaw);
+  const participantAltDigits = resolveSenderIdentifier(participantAltRaw);
+
+  // If Baileys provides alternate PN mapping, prefer it for LID-origin messages.
+  if (remoteJid.endsWith('@lid') && remoteAltDigits) {
+    return remoteAltDigits;
+  }
+
+  if (participantRaw && String(participantRaw).endsWith('@lid') && participantAltDigits) {
+    return participantAltDigits;
+  }
+
+  // For direct chats, remoteJid is the safest source. participant may come as @lid.
+  if (remoteJid.endsWith('@s.whatsapp.net') && remoteDigits) {
+    return remoteDigits;
+  }
+
+  return participantAltDigits || participantDigits || remoteAltDigits || remoteDigits;
 }
 
 function getSenderDebugInfo(msg) {
   return {
     remoteJid: msg?.key?.remoteJid || null,
+    remoteJidAlt: msg?.key?.remoteJidAlt || msg?.remoteJidAlt || null,
     participant: msg?.key?.participant || msg?.participant || null,
+    participantAlt: msg?.key?.participantAlt || msg?.participantAlt || null,
     remoteJidDigits: resolveSenderIdentifier(msg?.key?.remoteJid),
+    remoteJidAltDigits: resolveSenderIdentifier(msg?.key?.remoteJidAlt || msg?.remoteJidAlt),
     participantDigits: resolveSenderIdentifier(msg?.key?.participant || msg?.participant),
+    participantAltDigits: resolveSenderIdentifier(msg?.key?.participantAlt || msg?.participantAlt),
     extractedPhone: getSenderPhone(msg),
     pushName: msg?.pushName || null,
   };
@@ -304,6 +335,22 @@ async function ensureBotLoggingSchema() {
 
   try {
     await query(
+      `ALTER TABLE bot_mensagens_pendentes
+         ADD COLUMN whatsapp_message_id VARCHAR(100) NULL
+           COMMENT 'Id da mensagem WhatsApp enviada para correlacionar resposta'`
+    );
+  } catch (error) {
+    const isExpectedDuplicate =
+      error?.code === 'ER_DUP_FIELDNAME' ||
+      error?.errno === 1060;
+
+    if (!isExpectedDuplicate) {
+      console.error('[BOT_SCHEMA_WARN] Falha ao garantir coluna whatsapp_message_id:', error.message || error);
+    }
+  }
+
+  try {
+    await query(
       `ALTER TABLE horas_trabalhadas
          ADD COLUMN bot_sessao_id CHAR(36) NULL AFTER descricao,
          ADD KEY idx_horas_bot_sessao (bot_sessao_id)`
@@ -381,6 +428,157 @@ function buildObraLabel(obra) {
 
 function getMessageId(msg) {
   return String(msg?.key?.id || crypto.randomUUID());
+}
+
+function getQuotedMessageId(msg) {
+  return String(
+    msg?.message?.extendedTextMessage?.contextInfo?.stanzaId ||
+    msg?.message?.imageMessage?.contextInfo?.stanzaId ||
+    msg?.message?.videoMessage?.contextInfo?.stanzaId ||
+    msg?.message?.documentMessage?.contextInfo?.stanzaId ||
+    ''
+  ).trim();
+}
+
+function getReplyDecision(texto) {
+  if (texto === '1') return 1;
+  if (texto === '2') return 2;
+  return null;
+}
+
+async function processarRespostaNotificacao({ msg, texto, contexto = null }) {
+  const decisaoResposta = getReplyDecision(texto);
+  if (decisaoResposta === null) {
+    return false;
+  }
+
+  try {
+    const hasWhatsappMessageId = await detectarColunaWhatsappMessageId();
+    const quotedMessageId = getQuotedMessageId(msg);
+    let mensagemReferencia = null;
+
+    if (quotedMessageId && hasWhatsappMessageId) {
+      if (contexto) {
+        const quotedRows = await query(
+          `SELECT id, tenant_id, pagamento_id, funcionario_id, mensagem
+             FROM bot_mensagens_pendentes
+            WHERE tenant_id = ? AND funcionario_id = ? AND whatsapp_message_id = ?
+            ORDER BY created_at DESC
+            LIMIT 1`,
+          [contexto.tenantId, contexto.funcionario.id, quotedMessageId]
+        );
+        mensagemReferencia = quotedRows[0] || null;
+      } else {
+        const quotedRows = await query(
+          `SELECT m.id, m.tenant_id, m.pagamento_id, m.funcionario_id, m.mensagem
+             FROM bot_mensagens_pendentes m
+             INNER JOIN pagamentos p
+                ON p.id = m.pagamento_id
+               AND p.tenant_id = m.tenant_id
+            WHERE m.whatsapp_message_id = ?
+              AND m.status = 'enviado'
+              AND COALESCE(p.flg_vld_funcionario, 0) = 0
+            ORDER BY m.created_at DESC
+            LIMIT 1`,
+          [quotedMessageId]
+        );
+        mensagemReferencia = quotedRows[0] || null;
+      }
+    }
+
+    if (!mensagemReferencia) {
+      if (contexto) {
+        const ultimasPendentes = await query(
+          `SELECT m.id, m.tenant_id, m.pagamento_id, m.funcionario_id, m.mensagem
+             FROM bot_mensagens_pendentes m
+             INNER JOIN pagamentos p
+                ON p.id = m.pagamento_id
+               AND p.tenant_id = m.tenant_id
+            WHERE m.tenant_id = ?
+              AND m.funcionario_id = ?
+              AND m.status = 'enviado'
+              AND COALESCE(p.flg_vld_funcionario, 0) = 0
+            ORDER BY m.created_at DESC
+            LIMIT 1`,
+          [contexto.tenantId, contexto.funcionario.id]
+        );
+        mensagemReferencia = ultimasPendentes[0] || null;
+      } else {
+        // LID fallback: infer employee by pushName when available.
+        const pushName = String(msg?.pushName || '').trim();
+        if (pushName) {
+          const porNome = await query(
+            `SELECT m.id, m.tenant_id, m.pagamento_id, m.funcionario_id, m.mensagem
+               FROM bot_mensagens_pendentes m
+               INNER JOIN pagamentos p
+                  ON p.id = m.pagamento_id
+                 AND p.tenant_id = m.tenant_id
+               INNER JOIN funcionarios f
+                  ON f.id = m.funcionario_id
+                 AND f.tenant_id = m.tenant_id
+              WHERE m.status = 'enviado'
+                AND COALESCE(p.flg_vld_funcionario, 0) = 0
+                AND (
+                  LOWER(f.nome) = LOWER(?)
+                  OR LOWER(f.nome) LIKE LOWER(?)
+                )
+              ORDER BY m.created_at DESC
+              LIMIT 1`,
+            [pushName, `%${pushName}%`]
+          );
+          mensagemReferencia = porNome[0] || null;
+        }
+
+        // Final fallback requested by product rule: assume latest unresolved notification.
+        if (!mensagemReferencia) {
+          const candidatas = await query(
+            `SELECT m.id, m.tenant_id, m.pagamento_id, m.funcionario_id, m.mensagem
+               FROM bot_mensagens_pendentes m
+               INNER JOIN pagamentos p
+                  ON p.id = m.pagamento_id
+                 AND p.tenant_id = m.tenant_id
+              WHERE m.status = 'enviado'
+                AND COALESCE(p.flg_vld_funcionario, 0) = 0
+              ORDER BY m.created_at DESC
+              LIMIT 1`
+          );
+
+          if (candidatas.length > 0) {
+            mensagemReferencia = candidatas[0];
+          }
+        }
+      }
+    }
+
+    if (mensagemReferencia) {
+      await query(
+        'UPDATE pagamentos SET flg_vld_funcionario = ? WHERE id = ? AND tenant_id = ?',
+        [decisaoResposta, mensagemReferencia.pagamento_id, mensagemReferencia.tenant_id]
+      );
+      await query(
+        'UPDATE bot_mensagens_pendentes SET updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+        [mensagemReferencia.id]
+      );
+
+      await sock.sendMessage(msg.key.remoteJid, {
+        text: decisaoResposta === 1
+          ? '✅ Aprovação registrada! Obrigado.'
+          : '❌ Desaprovação registrada. O gestor será avisado.'
+      });
+      return true;
+    }
+
+    if (!contexto) {
+      await sock.sendMessage(msg.key.remoteJid, {
+        text: 'Não consegui vincular sua resposta ao pagamento. Se possível, responda usando a função Responder na mensagem recebida.'
+      });
+      return true;
+    }
+  } catch (validError) {
+    console.error('[BOT_NOTIF] Erro ao validar pagamento:', validError.message || validError);
+  }
+
+  return false;
 }
 
 async function registrarEventoRecebido({ tenantId, funcionarioId, messageId, evento, detalhes = {} }) {
@@ -630,6 +828,24 @@ async function detectarColunaTimezoneCode() {
   return tenantTimezoneCodeColumnExistsCache;
 }
 
+async function detectarColunaWhatsappMessageId() {
+  if (botMensagensWhatsappMessageIdColumnExistsCache !== null) {
+    return botMensagensWhatsappMessageIdColumnExistsCache;
+  }
+
+  const rows = await query(
+    `SELECT 1
+     FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'bot_mensagens_pendentes'
+       AND COLUMN_NAME = 'whatsapp_message_id'
+     LIMIT 1`
+  );
+
+  botMensagensWhatsappMessageIdColumnExistsCache = rows.length > 0;
+  return botMensagensWhatsappMessageIdColumnExistsCache;
+}
+
 async function carregarContextoTelefone(telefone) {
   const telefoneNormalizado = normalizePhone(telefone);
   if (!telefoneNormalizado) return null;
@@ -868,6 +1084,61 @@ async function registrarCheckin({ from, msg, estado, obra, localizacao, validaca
 }
 
 let sock = null;
+let notifInterval = null;
+let forceNewQrConsumed = false;
+
+async function processarMensagensPendentes() {
+  if (!sock) return;
+  try {
+    const hasWhatsappMessageId = await detectarColunaWhatsappMessageId();
+    const pendentes = await query(
+      `SELECT m.*, f.telefone, f.nome AS func_nome
+         FROM bot_mensagens_pendentes m
+         LEFT JOIN funcionarios f ON f.id = m.funcionario_id AND f.tenant_id = m.tenant_id
+        WHERE m.status = 'pendente' AND m.tentativas < 3
+        ORDER BY m.created_at ASC
+        LIMIT 10`
+    );
+    for (const msg_p of pendentes) {
+      if (!msg_p.telefone) {
+        await query(
+          "UPDATE bot_mensagens_pendentes SET status = 'erro', ultimo_erro = 'Funcionario sem telefone', tentativas = tentativas + 1 WHERE id = ?",
+          [msg_p.id]
+        );
+        continue;
+      }
+      const phone = normalizePhone(msg_p.telefone);
+      const jid = `${phone}@s.whatsapp.net`;
+      try {
+        const sent = await sock.sendMessage(jid, { text: msg_p.mensagem });
+        const whatsappMessageId = String(sent?.key?.id || '').trim() || null;
+        if (hasWhatsappMessageId) {
+          await query(
+            "UPDATE bot_mensagens_pendentes SET status = 'enviado', whatsapp_message_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            [whatsappMessageId, msg_p.id]
+          );
+        } else {
+          await query(
+            "UPDATE bot_mensagens_pendentes SET status = 'enviado', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            [msg_p.id]
+          );
+        }
+        await query(
+          'UPDATE pagamentos SET flg_envio_funcionario = 1 WHERE id = ? AND tenant_id = ?',
+          [msg_p.pagamento_id, msg_p.tenant_id]
+        );
+        console.log(`[BOT_NOTIF] Mensagem enviada para ${phone} (pagamento ${msg_p.pagamento_id}, whatsappMessageId=${whatsappMessageId || 'n/a'})`);
+      } catch (sendError) {
+        await query(
+          "UPDATE bot_mensagens_pendentes SET status = IF(tentativas + 1 >= 3, 'erro', 'pendente'), ultimo_erro = ?, tentativas = tentativas + 1 WHERE id = ?",
+          [sendError.message || 'Erro desconhecido', msg_p.id]
+        );
+      }
+    }
+  } catch (error) {
+    console.error('[BOT_NOTIF] Erro ao processar mensagens pendentes:', error.message || error);
+  }
+}
 
 async function connectToWhatsApp() {
   if (shouldRunSchemaBootstrap()) {
@@ -884,6 +1155,16 @@ async function connectToWhatsApp() {
   }
 
   const authDir = getAuthDir();
+  if (!forceNewQrConsumed && shouldForceNewQrOnStart()) {
+    try {
+      fs.rmSync(authDir, { recursive: true, force: true });
+      console.log('[BOT_AUTH] Sessão removida para forçar novo QR no start.');
+    } catch (error) {
+      console.error('[BOT_AUTH] Falha ao limpar auth dir:', error.message || error);
+    }
+    forceNewQrConsumed = true;
+  }
+
   if (!fs.existsSync(authDir)) {
     fs.mkdirSync(authDir, { recursive: true });
   }
@@ -901,8 +1182,11 @@ async function connectToWhatsApp() {
     if (qr) {
       console.log('Gerando QR Code para autenticação...');
       try {
+        const qrImagePath = path.join(authDir, 'whatsapp-qr.png');
         const qrCodeUrl = await qrcode.toDataURL(qr);
+        await qrcode.toFile(qrImagePath, qr, { margin: 2, scale: 8 });
         console.log('Escaneie o QR code abaixo para conectar o bot:');
+        console.log(`QR salvo em: ${qrImagePath}`);
         qrcode.toString(qr, { type: 'terminal', small: true }, (err, QRstring) => {
           if (!err) console.log(QRstring);
         });
@@ -919,6 +1203,10 @@ async function connectToWhatsApp() {
       }
     } else if (connection === 'open') {
       console.log('✅ Bot WhatsApp conectado com sucesso!');
+      if (!notifInterval) {
+        notifInterval = setInterval(processarMensagensPendentes, 30000);
+        console.log('[BOT_NOTIF] Polling de notificações ativo (30s).');
+      }
     }
   });
 
@@ -952,6 +1240,10 @@ async function connectToWhatsApp() {
       }
 
       if (!texto && !localizacao) return;
+
+      if (await processarRespostaNotificacao({ msg, texto, contexto: null })) {
+        return;
+      }
 
       const contexto = await carregarContextoTelefone(from);
       if (!contexto) {
@@ -1432,6 +1724,10 @@ async function connectToWhatsApp() {
         await sock.sendMessage(msg.key.remoteJid, {
           text: 'Digite *1* para fazer checkout.'
         });
+        return;
+      }
+
+      if (await processarRespostaNotificacao({ msg, texto, contexto })) {
         return;
       }
 
