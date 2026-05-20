@@ -1197,8 +1197,26 @@ async function connectToWhatsApp() {
     }
 
     if (connection === 'close') {
-      const shouldReconnect = (lastDisconnect?.error)?.output?.statusCode !== DisconnectReason.loggedOut;
-      console.log('Conexão fechada. Reconectando:', shouldReconnect);
+      const statusCode =
+        lastDisconnect?.error?.output?.statusCode ??
+        lastDisconnect?.error?.statusCode ??
+        null;
+
+      const shouldResetAuth =
+        statusCode === DisconnectReason.loggedOut ||
+        statusCode === DisconnectReason.badSession;
+
+      if (shouldResetAuth) {
+        console.warn(`[BOT_AUTH] Sessão inválida (${statusCode}). Limpando auth para gerar novo QR.`);
+        try {
+          fs.rmSync(authDir, { recursive: true, force: true });
+        } catch (error) {
+          console.error('[BOT_AUTH] Falha ao limpar auth dir após desconexão:', error.message || error);
+        }
+      }
+
+      const shouldReconnect = true;
+      console.log('Conexão fechada. statusCode:', statusCode, 'Reconectando:', shouldReconnect);
       if (shouldReconnect) {
         setTimeout(() => connectToWhatsApp(), 3000);
       }
