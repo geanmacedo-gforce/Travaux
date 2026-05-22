@@ -18,6 +18,7 @@ import { toast } from "sonner";
 import { Pencil, Clock, Wallet, Building2, ChevronDown, Check, MessageSquare, CheckCheck, XCircle, RotateCcw, Users } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Textarea } from "@/components/ui/textarea";
 import { useI18n } from "@/lib/i18n";
 
 export const Route = createFileRoute("/app/folha")({ component: Page });
@@ -64,6 +65,17 @@ function isValePagamento(pagamento: any) {
   return obs.includes("[VALE]");
 }
 
+function getValeObservacao(pagamento: any) {
+  const raw = String(pagamento?.observacoes ?? "").trim();
+  if (!raw || !isValePagamento(pagamento)) return "";
+
+  const lines = raw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const extra = lines.slice(1).join("\n").trim();
+  if (!extra) return "";
+
+  return extra.replace(/^observa[cç][aã]o:\s*/i, "").replace(/^obs:\s*/i, "").trim();
+}
+
 function getTipoPagamento(pagamento: any) {
   return isValePagamento(pagamento) ? "vale" : "pagamento";
 }
@@ -108,7 +120,7 @@ function Page() {
   const [valeOpen, setValeOpen] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [payForm, setPayForm] = useState<any>({ funcionario_id: "", valor: 0, data_pagamento: formatLocalDate(today), forma: "pix", periodo_inicio: inicio, periodo_fim: fim, status: "pago" });
-  const [valeForm, setValeForm] = useState<any>({ funcionario_id: "", valor: 0, data_pagamento: formatLocalDate(today), periodo_inicio: "", periodo_fim: "" });
+  const [valeForm, setValeForm] = useState<any>({ funcionario_id: "", valor: 0, data_pagamento: formatLocalDate(today), periodo_inicio: "", periodo_fim: "", observacao: "" });
   const funcFilterRef = useRef<HTMLDivElement | null>(null);
   const obraFilterRef = useRef<HTMLDivElement | null>(null);
 
@@ -146,9 +158,16 @@ function Page() {
     })) ?? [],
     enabled: Boolean(tenantId),
   });
+
+  const obraIdsFiltro = useMemo(() => Array.from(obraFilters), [obraFilters]);
+
   const { data: folhaData = [], error: folhaError } = useQuery({
-    queryKey: ["folha", inicio, fim, tenantId],
+    queryKey: ["folha", inicio, fim, tenantId, obraIdsFiltro.join(",")],
     queryFn: async () => {
+      const filtroObraSql = obraIdsFiltro.length > 0
+        ? ` AND h.obra_id IN (${obraIdsFiltro.map(() => "?").join(",")})`
+        : "";
+
       const result = await serverQuery({
         sql: `SELECT
               f.id AS funcionario_id,
@@ -156,25 +175,13 @@ function Page() {
               DATE_FORMAT(h.entrada, '%Y%m') AS period,
               COUNT(DISTINCT h.obra_id) AS obras_distintas,
               ROUND(SUM(h.horas), 4) AS total_horas,
-              ROUND(SUM(h.horas) * CASE f.tipo_remuneracao
-                WHEN 'diaria' THEN f.valor / 8
-                WHEN 'mensal' THEN f.valor / 220
-                ELSE f.valor
-              END, 2) AS total_bruto,
+              ROUND(SUM(COALESCE(h.valor_total, 0)), 2) AS total_bruto,
               COALESCE(MAX(pag.total_vales), 0) AS total_vales,
               COALESCE(MAX(pag.total_pagamentos), 0) AS total_pagamentos,
               LEAST(
-                ROUND(SUM(h.horas) * CASE f.tipo_remuneracao
-                  WHEN 'diaria' THEN f.valor / 8
-                  WHEN 'mensal' THEN f.valor / 220
-                  ELSE f.valor
-                END, 2),
+                ROUND(SUM(COALESCE(h.valor_total, 0)), 2),
                 ROUND(
-                  ROUND(SUM(h.horas) * CASE f.tipo_remuneracao
-                    WHEN 'diaria' THEN f.valor / 8
-                    WHEN 'mensal' THEN f.valor / 220
-                    ELSE f.valor
-                  END, 2)
+                  ROUND(SUM(COALESCE(h.valor_total, 0)), 2)
                   - COALESCE(MAX(pag.total_vales), 0)
                   - COALESCE(MAX(pag.total_pagamentos), 0)
                 , 2)
@@ -191,11 +198,11 @@ function Page() {
               WHERE tenant_id = ? AND status = 'pago'
               GROUP BY funcionario_id, DATE_FORMAT(COALESCE(periodo_inicio, data_pagamento), '%Y%m')
             ) pag ON pag.funcionario_id = h.funcionario_id AND pag.period = DATE_FORMAT(h.entrada, '%Y%m')
-            WHERE h.tenant_id = ? AND DATE(h.entrada) >= ? AND DATE(h.entrada) <= ?
-            GROUP BY f.id, f.nome, f.valor, f.tipo_remuneracao, DATE_FORMAT(h.entrada, '%Y%m')
+            WHERE h.tenant_id = ? AND DATE(h.entrada) >= ? AND DATE(h.entrada) <= ?${filtroObraSql}
+            GROUP BY f.id, f.nome, DATE_FORMAT(h.entrada, '%Y%m')
             HAVING SUM(h.horas) > 0
             ORDER BY f.nome, period`,
-        values: [tenantId, tenantId, inicio, fim],
+        values: [tenantId, tenantId, inicio, fim, ...obraIdsFiltro],
       });
       if (!result) return [];
       return result;
@@ -490,6 +497,7 @@ function Page() {
       data_pagamento: formatLocalDate(today),
       periodo_inicio: pInicio,
       periodo_fim: pFim,
+      observacao: "",
     });
     setValeOpen(true);
   };
@@ -501,6 +509,11 @@ function Page() {
     const valorVale = Number(valeForm.valor ?? 0);
     if (!Number.isFinite(valorVale)) return toast.error(t("Informe um valor de vale válido."));
     if (valorVale < 0) return toast.error(t("Vale não pode ter valor negativo."));
+    const observacaoVale = String(valeForm.observacao ?? "").trim();
+    const observacoes = [
+      "[VALE] Adiantamento",
+      observacaoVale ? `Observação: ${observacaoVale}` : "",
+    ].filter(Boolean).join("\n");
 
     try {
       const newId = crypto.randomUUID();
@@ -517,7 +530,7 @@ function Page() {
           "pago",
           valeForm.data_pagamento,
           "dinheiro",
-          "[VALE] Adiantamento",
+          observacoes,
         ],
       });
       // Enfileirar notificação WhatsApp para o funcionário
@@ -530,6 +543,7 @@ function Page() {
             "um adiantamento foi registrado para você:",
             `💵 Valor: ${fmtBRL(toNonNegativeMoney(valeForm.valor))}`,
             `📆 Data: ${fmtDate(valeForm.data_pagamento)}`,
+            ...(observacaoVale ? [`📝 Observação: ${observacaoVale}`] : []),
           ]
         );
         try {
@@ -557,6 +571,7 @@ function Page() {
       ? [
           `💵 Valor: ${fmtBRL(toNonNegativeMoney(p.valor))}`,
           `📆 Data: ${fmtDate(p.data_pagamento)}`,
+          ...(getValeObservacao(p) ? [`📝 Observação: ${getValeObservacao(p)}`] : []),
         ]
       : [
           `📅 Período: ${fmtDate(p.periodo_inicio)} → ${fmtDate(p.periodo_fim)}`,
@@ -759,7 +774,7 @@ function Page() {
           ) : (
             <div className="overflow-x-auto">
               <Table>
-                <TableHeader><TableRow><TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleHistSort("data_pagamento")}>{t("Data pgto")} {histSortIndicator("data_pagamento")}</Button></TableHead><TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleHistSort("funcionario_nome")}>{t("Funcionário")} {histSortIndicator("funcionario_nome")}</Button></TableHead><TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleHistSort("periodo_inicio")}>{t("Período")} {histSortIndicator("periodo_inicio")}</Button></TableHead><TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleHistSort("valor")}>{t("Valor")} {histSortIndicator("valor")}</Button></TableHead><TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleHistSort("tipo")}>{t("Tipo")} {histSortIndicator("tipo")}</Button></TableHead><TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleHistSort("forma")}>{t("Forma")} {histSortIndicator("forma")}</Button></TableHead><TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleHistSort("status")}>{t("Status")} {histSortIndicator("status")}</Button></TableHead><TableHead><Button variant="ghost" size="sm" className="h-auto p-0 pointer-events-none hover:bg-transparent">{t("Notificação")}</Button></TableHead><TableHead className="text-right"></TableHead></TableRow></TableHeader>
+                <TableHeader><TableRow><TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleHistSort("data_pagamento")}>{t("Data pgto")} {histSortIndicator("data_pagamento")}</Button></TableHead><TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleHistSort("funcionario_nome")}>{t("Funcionário")} {histSortIndicator("funcionario_nome")}</Button></TableHead><TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleHistSort("periodo_inicio")}>{t("Período")} {histSortIndicator("periodo_inicio")}</Button></TableHead><TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleHistSort("valor")}>{t("Valor")} {histSortIndicator("valor")}</Button></TableHead><TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleHistSort("tipo")}>{t("Tipo")} {histSortIndicator("tipo")}</Button></TableHead><TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleHistSort("forma")}>{t("Forma")} {histSortIndicator("forma")}</Button></TableHead><TableHead><Button variant="ghost" size="sm" className="h-auto p-0" onClick={() => handleHistSort("status")}>{t("Status")} {histSortIndicator("status")}</Button></TableHead><TableHead>{t("Observação")}</TableHead><TableHead><Button variant="ghost" size="sm" className="h-auto p-0 pointer-events-none hover:bg-transparent">{t("Notificação")}</Button></TableHead><TableHead className="text-right"></TableHead></TableRow></TableHeader>
                 <TableBody>
                   {pagamentosOrdenados.map((p:any)=>(
                     <TableRow key={p.id}>
@@ -770,6 +785,7 @@ function Page() {
                       <TableCell className="capitalize">{tEnum(getTipoPagamento(p))}</TableCell>
                       <TableCell className="capitalize">{tEnum(p.forma)}</TableCell>
                       <TableCell><Badge className={p.status==="pago"?"bg-success/20 text-success":"bg-warning/20"}>{tEnum(p.status)}</Badge></TableCell>
+                      <TableCell className="max-w-[260px] truncate text-sm text-muted-foreground">{isValePagamento(p) ? (getValeObservacao(p) || "-") : "-"}</TableCell>
                       <TableCell>
                         <TooltipProvider>
                           <div className="flex items-center gap-1">
@@ -806,7 +822,7 @@ function Page() {
                         </TooltipProvider>
                       </TableCell>
                       <TableCell className="text-right inline-flex items-center gap-1 justify-end w-full">
-                        {Number(p.flg_vld_funcionario) === 2 && (
+                        {Number(p.flg_vld_funcionario) !== 1 && (
                           <TooltipProvider>
                             <Tooltip>
                               <TooltipTrigger asChild>
@@ -830,7 +846,7 @@ function Page() {
                       </TableCell>
                     </TableRow>
                   ))}
-                  {pagamentosOrdenados.length===0 && <TableRow><TableCell colSpan={8} className="text-center py-6 text-muted-foreground">{t("Sem pagamentos.")}</TableCell></TableRow>}
+                  {pagamentosOrdenados.length===0 && <TableRow><TableCell colSpan={10} className="text-center py-6 text-muted-foreground">{t("Sem pagamentos.")}</TableCell></TableRow>}
                 </TableBody>
               </Table>
             </div>
@@ -871,6 +887,15 @@ function Page() {
         </div>
         <div><Label>{t("Valor do vale")}</Label><CurrencyInput value={valeForm.valor} onValueChange={(value)=>setValeForm({...valeForm,valor:value})}/></div>
         <div><Label>{t("Data")}</Label><Input type="date" value={valeForm.data_pagamento} onChange={(e)=>setValeForm({...valeForm,data_pagamento:e.target.value})}/></div>
+        <div className="space-y-2">
+          <Label>{t("Observação")}</Label>
+          <Textarea
+            value={valeForm.observacao}
+            onChange={(e)=>setValeForm({...valeForm, observacao: e.target.value})}
+            placeholder={t("Opcional")}
+            rows={3}
+          />
+        </div>
       </FormDialog>
     </div>
   );

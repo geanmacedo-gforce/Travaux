@@ -45,7 +45,26 @@ const ALMOCO_OPTIONS = [
   { label: '90 min', value: 90 },
   { label: '120 min', value: 120 },
   { label: 'Sem almoço', value: 0 },
+  { label: 'Cancelar checkout', cancelCheckout: true },
 ];
+
+const CHECKOUT_COMMANDS = new Set([
+  'fim',
+  'finalizar',
+  'encerrar',
+  'end',
+  'finish',
+  'finished',
+  'fin',
+  'close',
+  'cerrar',
+  'terminer',
+  'fermer',
+  'ende',
+  'fertig',
+  'schliessen',
+  'terminar',
+]);
 
 // Estados de sessão por contato
 const estados = new Map();
@@ -445,6 +464,45 @@ function getReplyDecision(texto) {
   if (texto === '1') return 1;
   if (texto === '2') return 2;
   return null;
+}
+
+function isPrimaryChoice(texto) {
+  return texto === '1';
+}
+
+function isSecondaryChoice(texto) {
+  return texto === '2';
+}
+
+function isCheckoutCommand(texto) {
+  return CHECKOUT_COMMANDS.has(String(texto || '').trim().toLowerCase());
+}
+
+function calcularValorHoraFuncionario(funcionario) {
+  const valorBase = Number(funcionario?.valor ?? 0);
+  if (!Number.isFinite(valorBase) || valorBase <= 0) return 0;
+
+  const tipo = String(funcionario?.tipo_remuneracao || 'hora').toLowerCase();
+  if (tipo === 'diaria') return valorBase / 8;
+  if (tipo === 'mensal') return valorBase / 220;
+  return valorBase;
+}
+
+async function buscarValorHoraFuncionario(tenantId, funcionarioId) {
+  try {
+    const rows = await query(
+      `SELECT tipo_remuneracao, valor
+         FROM funcionarios
+        WHERE tenant_id = ? AND id = ?
+        LIMIT 1`,
+      [tenantId, funcionarioId]
+    );
+
+    return calcularValorHoraFuncionario(rows[0] || null);
+  } catch (error) {
+    console.error('[BOT_HORAS] Falha ao buscar valor_hora do funcionário:', error.message || error);
+    return 0;
+  }
 }
 
 async function processarRespostaNotificacao({ msg, texto, contexto = null }) {
@@ -1076,10 +1134,10 @@ async function registrarCheckin({ from, msg, estado, obra, localizacao, validaca
   const horarioFormatado = formatarDataHoraUsuario(checkin, estado.contexto?.timezoneCode);
 
   const mensagem = divergencia
-    ? `⚠️ Check-in registrado com divergência de localização.\n📍 Você estava a ${fmtMetros(validacao.distancia)} da obra (raio: ${fmtMetros(validacao.raio)})\n\n🏢 Obra: ${obraLabel}\n⏰ Horário: ${horarioFormatado}\n\nDigite *1* para fazer o checkout.`
+    ? `⚠️ Check-in registrado com divergência de localização.\n📍 Você estava a ${fmtMetros(validacao.distancia)} da obra (raio: ${fmtMetros(validacao.raio)})\n\n🏢 Obra: ${obraLabel}\n⏰ Horário: ${horarioFormatado}\n\nDigite *fim* para fazer o checkout.`
     : validacao
-      ? `✅ Check-in registrado com sucesso!\n📍 Localização confirmada (${fmtMetros(validacao.distancia)} da obra)\n\n🏢 Obra: ${obraLabel}\n⏰ Horário: ${horarioFormatado}\n\nDigite *1* para fazer o checkout.`
-      : `✅ Check-in registrado com sucesso!\n\n🏢 Obra: ${obraLabel}\n⏰ Horário: ${horarioFormatado}\n\nDigite *1* para fazer o checkout.`;
+      ? `✅ Check-in registrado com sucesso!\n📍 Localização confirmada (${fmtMetros(validacao.distancia)} da obra)\n\n🏢 Obra: ${obraLabel}\n⏰ Horário: ${horarioFormatado}\n\nDigite *fim* para fazer o checkout.`
+      : `✅ Check-in registrado com sucesso!\n\n🏢 Obra: ${obraLabel}\n⏰ Horário: ${horarioFormatado}\n\nDigite *fim* para fazer o checkout.`;
 
   return sock.sendMessage(msg.key.remoteJid, { text: mensagem });
 }
@@ -1260,10 +1318,6 @@ async function connectToWhatsApp() {
 
       if (!texto && !localizacao) return;
 
-      if (await processarRespostaNotificacao({ msg, texto, contexto: null })) {
-        return;
-      }
-
       const contexto = await carregarContextoTelefone(from);
       if (!contexto) {
         await sock.sendMessage(msg.key.remoteJid, {
@@ -1310,6 +1364,11 @@ async function connectToWhatsApp() {
       }
 
       estados.set(from, estado);
+
+      const quotedMessageId = getQuotedMessageId(msg);
+      if (quotedMessageId && await processarRespostaNotificacao({ msg, texto, contexto })) {
+        return;
+      }
 
       // FASE: Localização
       if (localizacao && estado.fase === 'confirmando_localizacao' && estado.contexto.suporteLocalizacao.hasCoordinates) {
@@ -1376,7 +1435,7 @@ async function connectToWhatsApp() {
           }
           estados.set(from, estado);
           await sock.sendMessage(msg.key.remoteJid, {
-            text: `⚠️ Você está fora do raio da obra!\n\n📍 Sua distância: ${fmtMetros(validacao.distancia)}\n✅ Raio permitido: ${fmtMetros(validacao.raio)}\n↗️ Desvio: ${fmtMetros(validacao.desvio)} além do limite\n\n🏢 Obra: ${estado.obraLabel}\n\nEssa é a obra certa? Deseja confirmar o check-in mesmo assim?\n\n✅ *sim* - Confirmar mesmo distante\n❌ *não* - Escolher outra obra`
+            text: `⚠️ Você está fora do raio da obra!\n\n📍 Sua distância: ${fmtMetros(validacao.distancia)}\n✅ Raio permitido: ${fmtMetros(validacao.raio)}\n↗️ Desvio: ${fmtMetros(validacao.desvio)} além do limite\n\n🏢 Obra: ${estado.obraLabel}\n\nEssa é a obra certa? Deseja confirmar o check-in mesmo assim?\n\n✅ *1* - Confirmar mesmo distante\n❌ *2* - Escolher outra obra`
           });
           return;
         }
@@ -1385,13 +1444,13 @@ async function connectToWhatsApp() {
       // FASE: Confirmando divergência de localização
       if (estado.fase === 'confirmando_divergencia_localizacao') {
         const obra = estado.contexto.obras.find((o) => String(o.id) === String(estado.obraId));
-        if (texto === 'sim') {
+        if (isPrimaryChoice(texto)) {
           const localizacaoPendente = estado.localizacaoPendente;
           const validacaoPendente = estado.validacaoPendente;
           await registrarCheckin({ from, msg, estado, obra, localizacao: localizacaoPendente, validacao: validacaoPendente, messageId, divergencia: true });
           estados.set(from, estado);
           return;
-        } else if (texto === 'não' || texto === 'nao') {
+        } else if (isSecondaryChoice(texto)) {
           estado.fase = 'escolhendo_obra';
           estado.localizacaoPendente = null;
           estado.validacaoPendente = null;
@@ -1421,7 +1480,7 @@ async function connectToWhatsApp() {
           return;
         } else {
           await sock.sendMessage(msg.key.remoteJid, {
-            text: `Responda *sim* para confirmar o check-in ou *não* para escolher outra obra.`
+            text: `Responda *1* para confirmar o check-in ou *2* para escolher outra obra.`
           });
           return;
         }
@@ -1439,7 +1498,7 @@ async function connectToWhatsApp() {
 
         if (estado.fase === 'trabalhando' || estado.fase === 'selecionando_almoco') {
           await sock.sendMessage(msg.key.remoteJid, {
-            text: 'Você já está com uma jornada aberta. Digite *1* para fazer o checkout.'
+            text: 'Você já está com uma jornada aberta. Digite *fim* para fazer o checkout.'
           });
           return;
         }
@@ -1525,14 +1584,14 @@ async function connectToWhatsApp() {
         });
         estados.set(from, estado);
 
-        const msg_confirmacao = `Confirmou que está em:\n\n🏢 *${estado.obraLabel}*\n\n*SIM* - Confirmar\n*OUTRO* - Escolher outra`;
+        const msg_confirmacao = `Confirmou que está em:\n\n🏢 *${estado.obraLabel}*\n\n*1* - Confirmar\n*2* - Escolher outra`;
         await sock.sendMessage(msg.key.remoteJid, { text: msg_confirmacao });
         return;
       }
 
       // FASE: Confirmando obra
       if (estado.fase === 'confirmando_obra') {
-        if (texto === 'sim') {
+        if (isPrimaryChoice(texto)) {
           const obra = estado.contexto.obras.find((o) => String(o.id) === String(estado.obraId));
           
           if (!estado.contexto.suporteLocalizacao.hasCoordinates) {
@@ -1574,7 +1633,7 @@ async function connectToWhatsApp() {
             text: `Compartilhe sua localização atual`
           });
           return;
-        } else if (texto === 'outro') {
+        } else if (isSecondaryChoice(texto)) {
           estado.fase = 'escolhendo_obra';
           if (estado.sessaoId) {
             await salvarSessaoBot(estado.sessaoId, estado.contexto.tenantId, {
@@ -1606,14 +1665,14 @@ async function connectToWhatsApp() {
           return;
         } else {
           await sock.sendMessage(msg.key.remoteJid, {
-            text: 'Digite *SIM* ou *OUTRO*'
+            text: 'Digite *1* ou *2*'
           });
           return;
         }
       }
 
       // FASE: Checkout
-      if (texto === '1' && estado.fase === 'trabalhando') {
+      if (isCheckoutCommand(texto) && estado.fase === 'trabalhando') {
         const checkout = new Date();
         const duracaoMinutos = Math.round((checkout - estado.checkin) / 60000);
 
@@ -1663,24 +1722,66 @@ async function connectToWhatsApp() {
           return;
         }
 
-        const almocoMinutos = ALMOCO_OPTIONS[indice - 1].value;
+        const opcaoSelecionada = ALMOCO_OPTIONS[indice - 1];
+
+        if (opcaoSelecionada.cancelCheckout) {
+          estado.fase = 'trabalhando';
+          estado.checkout = null;
+          estado.duracao = null;
+          if (estado.sessaoId) {
+            await salvarSessaoBot(estado.sessaoId, estado.contexto.tenantId, {
+              status: 'trabalhando',
+              etapaAtual: 'trabalhando',
+              checkoutAt: null,
+              duracaoMinutos: null,
+              almocoMinutos: null,
+              finalizadaEm: null,
+              ultimaMensagemId: messageId,
+              ultimaMensagemTexto: texto,
+              ultimoEvento: 'checkout_cancelado',
+            });
+            await vincularEventoSessao({
+              tenantId: estado.contexto.tenantId,
+              messageId,
+              sessaoId: estado.sessaoId,
+              evento: 'checkout_cancelado',
+              etapaAnterior: 'selecionando_almoco',
+              etapaNova: 'trabalhando',
+              detalhes: {
+                obraId: estado.obraId,
+              },
+            });
+          }
+          estados.set(from, estado);
+
+          await sock.sendMessage(msg.key.remoteJid, {
+            text: `✅ Checkout cancelado. Você continua na obra ${estado.obraLabel}.\n\nSe quiser encerrar a jornada, digite *fim*.`
+          });
+          return;
+        }
+
+        const almocoMinutos = opcaoSelecionada.value;
         
         try {
           const horaLiquidaMinutos = Math.max(0, (Number(estado.duracao) || 0) - almocoMinutos);
           const horaLiquida = horaLiquidaMinutos / 60;
           const horasFormatada = formatMinutesAsClock(horaLiquidaMinutos);
+          const valorHora = await buscarValorHoraFuncionario(estado.tenantId, estado.funcionarioId);
+          const valorTotal = Number((horaLiquida * valorHora).toFixed(2));
           
           await query(
             `INSERT INTO horas_trabalhadas 
-             (id, tenant_id, obra_id, funcionario_id, entrada, saida, almoco_minutos, horas, bot_sessao_id)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+             (id, tenant_id, obra_id, funcionario_id, entrada, saida, almoco_minutos, horas, valor_hora, valor_total, bot_sessao_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON DUPLICATE KEY UPDATE
                obra_id = VALUES(obra_id),
                funcionario_id = VALUES(funcionario_id),
                entrada = VALUES(entrada),
                saida = VALUES(saida),
                almoco_minutos = VALUES(almoco_minutos),
-               horas = VALUES(horas)`,
+               horas = VALUES(horas),
+               valor_hora = VALUES(valor_hora),
+               valor_total = VALUES(valor_total)`,
             [
               estado.sessaoId || crypto.randomUUID(),
               estado.tenantId,
@@ -1690,6 +1791,8 @@ async function connectToWhatsApp() {
               estado.checkout,
               almocoMinutos,
               horaLiquida.toFixed(2),
+              valorHora,
+              valorTotal,
               estado.sessaoId || null,
             ]
           );
@@ -1741,7 +1844,7 @@ async function connectToWhatsApp() {
       // Default
       if (estado.fase === 'trabalhando') {
         await sock.sendMessage(msg.key.remoteJid, {
-          text: 'Digite *1* para fazer checkout.'
+          text: 'Digite *fim* para fazer checkout.'
         });
         return;
       }

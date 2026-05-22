@@ -58,6 +58,16 @@ function formatDistanceMeters(meters: any) {
   return `${Math.round(value)} m`;
 }
 
+function calcularValorHoraFuncionario(funcionario: any) {
+  const baseValor = Number(funcionario?.valor ?? 0);
+  if (!Number.isFinite(baseValor) || baseValor <= 0) return 0;
+
+  const tipo = String(funcionario?.tipo_remuneracao ?? "hora").toLowerCase();
+  if (tipo === "diaria") return baseValor / 8;
+  if (tipo === "mensal") return baseValor / 220;
+  return baseValor;
+}
+
 function Page() {
   const { user } = useAuth();
   const { t } = useI18n();
@@ -326,6 +336,12 @@ function Page() {
     }
 
     const horas = calcularHoras(pontoForm.entrada, pontoForm.saida, pontoForm.almoco_minutos);
+    const funcionario = funcs.find((f: any) => f.id === pontoForm.funcionario_id);
+    if (!funcionario) {
+      return toast.error(isEnglishFallback(t, "Funcionário inválido"));
+    }
+    const valorHora = calcularValorHoraFuncionario(funcionario);
+    const valorTotal = Number(horas) * valorHora;
 
     try {
       const diaRegistro = formatLocalDate(entradaDate);
@@ -363,7 +379,7 @@ function Page() {
       if (editId) {
         await serverQuery({
           sql: `UPDATE horas_trabalhadas
-                SET funcionario_id = ?, obra_id = ?, entrada = ?, saida = ?, almoco_minutos = ?, horas = ?
+                SET funcionario_id = ?, obra_id = ?, entrada = ?, saida = ?, almoco_minutos = ?, horas = ?, valor_hora = ?, valor_total = ?
                 WHERE id = ? AND tenant_id = ?`,
           values: [
             pontoForm.funcionario_id,
@@ -372,14 +388,16 @@ function Page() {
             pontoForm.saida,
             Number(pontoForm.almoco_minutos),
             horas,
+            valorHora,
+            valorTotal,
             editId,
             tenantId,
           ],
         });
       } else {
         await serverQuery({
-          sql: `INSERT INTO horas_trabalhadas (id, tenant_id, funcionario_id, obra_id, entrada, saida, almoco_minutos, horas)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          sql: `INSERT INTO horas_trabalhadas (id, tenant_id, funcionario_id, obra_id, entrada, saida, almoco_minutos, horas, valor_hora, valor_total)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           values: [
             crypto.randomUUID(),
             tenantId,
@@ -389,6 +407,8 @@ function Page() {
             pontoForm.saida,
             Number(pontoForm.almoco_minutos),
             horas,
+            valorHora,
+            valorTotal,
           ],
         });
       }

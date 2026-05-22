@@ -18,6 +18,16 @@ const BRAND_PRIMARY = "#E8620A";
 const BRAND_SECONDARY = "#1A1A1A";
 const PIE_COLORS = ["#E8620A","#1A1A1A","#9CA3AF","#F2A368","#4B5563","#FBBF24"];
 
+function toNumber(value: any) {
+  const n = Number(value ?? 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function getHoraData(row: any) {
+  const raw = String(row?.data || row?.entrada || "").trim();
+  return raw.slice(0, 10);
+}
+
 export const Route = createFileRoute("/app/relatorios")({ component: Page });
 
 function Page() {
@@ -48,13 +58,64 @@ function Page() {
   const funcsAll = lookups?.funcs ?? [];
   const clientesAll = lookups?.clientes ?? [];
 
+  const obraIdsFiltroSql = useMemo(() => {
+    let obrasFiltradas = obrasAll as any[];
+    if (clienteFilters.size > 0) obrasFiltradas = obrasFiltradas.filter((o) => clienteFilters.has(o.cliente_id));
+    if (obraFilters.size > 0) obrasFiltradas = obrasFiltradas.filter((o) => obraFilters.has(o.id));
+    return obrasFiltradas.map((o) => o.id);
+  }, [obrasAll, clienteFilters, obraFilters]);
+
   const { data } = useQuery({
-    queryKey: ["relatorios", inicio, fim, tenantId],
+    queryKey: [
+      "relatorios",
+      inicio,
+      fim,
+      tenantId,
+      Array.from(funcionarioFilters).sort().join(","),
+      Array.from(clienteFilters).sort().join(","),
+      Array.from(obraFilters).sort().join(","),
+      obraIdsFiltroSql.join(","),
+    ],
     enabled: Boolean(tenantId),
     queryFn: async () => {
-      const [horas, mats, desp] = await Promise.all([
+      const funcionarioIds = Array.from(funcionarioFilters);
+      const obraIds = obraIdsFiltroSql;
+      const totalMaoObraSqlBase = `SELECT COALESCE(ROUND(SUM(valor_total), 2), 0) AS total_mo
+        FROM horas_trabalhadas
+        WHERE tenant_id = ?
+          AND DATE(entrada) >= ?
+          AND DATE(entrada) <= ?`;
+
+      const whereExtra: string[] = [];
+      const valuesExtra: any[] = [];
+
+      if (obraIds.length > 0) {
+        whereExtra.push(`obra_id IN (${obraIds.map(() => "?").join(",")})`);
+        valuesExtra.push(...obraIds);
+      }
+      if (funcionarioIds.length > 0) {
+        whereExtra.push(`funcionario_id IN (${funcionarioIds.map(() => "?").join(",")})`);
+        valuesExtra.push(...funcionarioIds);
+      }
+
+      const totalMaoObraSql = whereExtra.length
+        ? `${totalMaoObraSqlBase} AND ${whereExtra.join(" AND ")}`
+        : totalMaoObraSqlBase;
+      const totalMaoObraValues = [tenantId, inicio, fim, ...valuesExtra];
+
+      const maoObraPorObraSqlBase = `SELECT obra_id, COALESCE(ROUND(SUM(valor_total), 2), 0) AS total_mo
+        FROM horas_trabalhadas
+        WHERE tenant_id = ?
+          AND DATE(entrada) >= ?
+          AND DATE(entrada) <= ?`;
+      const maoObraPorObraSql = whereExtra.length
+        ? `${maoObraPorObraSqlBase} AND ${whereExtra.join(" AND ")} GROUP BY obra_id`
+        : `${maoObraPorObraSqlBase} GROUP BY obra_id`;
+      const maoObraPorObraValues = [tenantId, inicio, fim, ...valuesExtra];
+
+      const [horas, mats, desp, totalMaoObra, maoObraPorObra] = await Promise.all([
         serverQuery({
-          sql: "SELECT * FROM horas_trabalhadas WHERE tenant_id = ? AND data >= ? AND data <= ?",
+          sql: "SELECT * FROM horas_trabalhadas WHERE tenant_id = ? AND DATE(entrada) >= ? AND DATE(entrada) <= ?",
           values: [tenantId, inicio, fim],
         }),
         serverQuery({
@@ -65,11 +126,33 @@ function Page() {
           sql: "SELECT * FROM despesas WHERE tenant_id = ? AND data >= ? AND data <= ?",
           values: [tenantId, inicio, fim],
         }),
+        serverQuery({
+          sql: totalMaoObraSql,
+          values: totalMaoObraValues,
+        }),
+        serverQuery({
+          sql: maoObraPorObraSql,
+          values: maoObraPorObraValues,
+        }),
       ]);
-      return { horas: horas ?? [], mats: mats ?? [], desp: desp ?? [] };
+      return {
+        horas: horas ?? [],
+        mats: mats ?? [],
+        desp: desp ?? [],
+        totalMO: toNumber((totalMaoObra as any[])?.[0]?.total_mo),
+        maoObraPorObra: maoObraPorObra ?? [],
+      };
     },
   });
-  const { horas = [], mats = [], desp = [] } = data ?? {};
+  const { horas = [], mats = [], desp = [], totalMO: totalMODb = 0, maoObraPorObra = [] } = data ?? {};
+
+  const maoObraPorObraMap = useMemo(() => {
+    const map = new Map<string, number>();
+    (maoObraPorObra as any[]).forEach((row: any) => {
+      map.set(String(row.obra_id), toNumber(row.total_mo));
+    });
+    return map;
+  }, [maoObraPorObra]);
 
   // Apply filters: cliente -> filtra obras; obra -> filtra registros; funcionario -> filtra horas
   const { obrasF, horasF, matsF, despF } = useMemo(() => {
@@ -93,12 +176,12 @@ function Page() {
     return { obrasF: obrasFinal, horasF, matsF, despF };
   }, [obrasAll, horas, mats, desp, obraFilters, funcionarioFilters, clienteFilters]);
 
-  const totalMO = horasF.reduce((s, h: any) => s + Number(h.valor_total), 0);
-  const totalMat = matsF.reduce((s, m: any) => s + Number(m.valor_total), 0);
-  const cat = (c: string) => despF.filter((d: any) => d.categoria === c).reduce((s: number, d: any) => s + Number(d.valor), 0);
+  const totalMO = totalMODb;
+  const totalMat = matsF.reduce((s, m: any) => s + toNumber(m.valor_total), 0);
+  const cat = (c: string) => despF.filter((d: any) => d.categoria === c).reduce((s: number, d: any) => s + toNumber(d.valor), 0);
   const totComb = cat("combustivel"), totAlim = cat("alimentacao"), totHosp = cat("hospedagem"), totOut = cat("outros");
   const totalGastos = totalMO + totalMat + totComb + totAlim + totHosp + totOut;
-  const fat = obrasF.reduce((s, o: any) => s + Number(o.valor_contratado), 0);
+  const fat = obrasF.reduce((s, o: any) => s + toNumber(o.valor_contratado), 0);
   const lucro = fat - totalGastos;
   const margem = fat > 0 ? (lucro / fat) * 100 : 0;
 
@@ -114,18 +197,21 @@ function Page() {
 
   // Barras por obra
   const barObras = obrasF.slice(0, 8).map((o: any) => {
-    const mo = horasF.filter((h: any) => h.obra_id === o.id).reduce((s: number, h: any) => s + Number(h.valor_total), 0);
-    const ma = matsF.filter((m: any) => m.obra_id === o.id).reduce((s: number, m: any) => s + Number(m.valor_total), 0);
-    const de = despF.filter((d: any) => d.obra_id === o.id).reduce((s: number, d: any) => s + Number(d.valor), 0);
-    return { nome: o.nome.slice(0, 14), [t("Faturado")]: Number(o.valor_contratado), [t("Gastos")]: mo + ma + de };
+    const mo = maoObraPorObraMap.get(String(o.id)) ?? 0;
+    const ma = matsF.filter((m: any) => m.obra_id === o.id).reduce((s: number, m: any) => s + toNumber(m.valor_total), 0);
+    const de = despF.filter((d: any) => d.obra_id === o.id).reduce((s: number, d: any) => s + toNumber(d.valor), 0);
+    return { nome: o.nome.slice(0, 14), [t("Faturado")]: toNumber(o.valor_contratado), [t("Gastos")]: mo + ma + de };
   });
 
   // Linha por dia (gastos)
   const byDay = new Map<string, number>();
-  [...horasF.map((h: any) => ({ data: h.data, valor: Number(h.valor_total) })),
-   ...matsF.map((m: any) => ({ data: m.data, valor: Number(m.valor_total) })),
-   ...despF.map((d: any) => ({ data: d.data, valor: Number(d.valor) }))]
-    .forEach((r) => byDay.set(r.data, (byDay.get(r.data) ?? 0) + r.valor));
+  [...horasF.map((h: any) => ({ data: getHoraData(h), valor: toNumber(h.valor_total) })),
+   ...matsF.map((m: any) => ({ data: String(m.data ?? "").slice(0, 10), valor: toNumber(m.valor_total) })),
+   ...despF.map((d: any) => ({ data: String(d.data ?? "").slice(0, 10), valor: toNumber(d.valor) }))]
+    .forEach((r) => {
+      if (!r.data) return;
+      byDay.set(r.data, (byDay.get(r.data) ?? 0) + r.valor);
+    });
   const lineData = Array.from(byDay.entries())
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([data, valor]) => ({ data: data.slice(5), [t("Gastos")]: valor }));
@@ -256,16 +342,17 @@ function Page() {
             <TableHeader><TableRow><TableHead>{t("Obra")}</TableHead><TableHead>{t("Faturado")}</TableHead><TableHead>MO</TableHead><TableHead>{t("Mat.")}</TableHead><TableHead>Desp.</TableHead><TableHead>{t("Total gastos")}</TableHead>{isOwner && <><TableHead>{t("Lucro")}</TableHead><TableHead>{t("Margem")}</TableHead></>}</TableRow></TableHeader>
             <TableBody>
               {obrasF.map((o: any) => {
-                const mo = horasF.filter((h: any) => h.obra_id === o.id).reduce((s: number, h: any) => s + Number(h.valor_total), 0);
-                const ma = matsF.filter((m: any) => m.obra_id === o.id).reduce((s: number, m: any) => s + Number(m.valor_total), 0);
-                const de = despF.filter((d: any) => d.obra_id === o.id).reduce((s: number, d: any) => s + Number(d.valor), 0);
+                const mo = maoObraPorObraMap.get(String(o.id)) ?? 0;
+                const ma = matsF.filter((m: any) => m.obra_id === o.id).reduce((s: number, m: any) => s + toNumber(m.valor_total), 0);
+                const de = despF.filter((d: any) => d.obra_id === o.id).reduce((s: number, d: any) => s + toNumber(d.valor), 0);
                 const tot = mo + ma + de;
-                const lu = Number(o.valor_contratado) - tot;
-                const mg = o.valor_contratado > 0 ? (lu / Number(o.valor_contratado)) * 100 : 0;
+                const faturado = toNumber(o.valor_contratado);
+                const lu = faturado - tot;
+                const mg = faturado > 0 ? (lu / faturado) * 100 : 0;
                 return (
                   <TableRow key={o.id}>
                     <TableCell className="font-medium">{o.nome}</TableCell>
-                    <TableCell>{fmtBRL(o.valor_contratado)}</TableCell>
+                    <TableCell>{fmtBRL(faturado)}</TableCell>
                     <TableCell>{fmtBRL(mo)}</TableCell>
                     <TableCell>{fmtBRL(ma)}</TableCell>
                     <TableCell>{fmtBRL(de)}</TableCell>
