@@ -30,6 +30,8 @@ sudo rm -rf "$BOT_AUTH_DIR"
 
 echo "🔄 Reiniciando serviços..."
 sudo systemctl restart travaux.service
+sudo systemctl stop bot-whatsapp.service
+sudo rm -rf "$BOT_AUTH_DIR"
 sudo systemctl restart bot-whatsapp.service
 
 echo "✅ Deploy concluído para a aplicação web."
