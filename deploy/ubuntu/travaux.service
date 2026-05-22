@@ -9,7 +9,6 @@ Group=travaux
 WorkingDirectory=/home/travaux/app/Travaux/Travaux/Interface
 Environment=NODE_ENV=production
 Environment=TRAVAUX_ENV_FILE=/home/travaux/.travaux/travaux.env
-ExecStartPre=/usr/bin/npm run build
 ExecStart=/usr/bin/npm run start
 Restart=always
 RestartSec=5
