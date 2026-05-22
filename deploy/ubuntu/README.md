@@ -11,6 +11,8 @@ Recommended layout on the server:
 
 Use explicit file paths only. Do not rely on directory scanning for secrets.
 
+When running `deploy-travaux`, the bot service should be restarted with a fresh Baileys session and its journal followed so the QR code appears in the deployment output.
+
 ## Files
 
 - `travaux.service` starts the Travaux app
